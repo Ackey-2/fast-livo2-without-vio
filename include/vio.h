@@ -35,24 +35,24 @@ struct SubSparseMap
 
   SubSparseMap()
   {
-    propa_errors.reserve(SIZE_LARGE);
-    errors.reserve(SIZE_LARGE);
-    warp_patch.reserve(SIZE_LARGE);
-    search_levels.reserve(SIZE_LARGE);
-    voxel_points.reserve(SIZE_LARGE);
-    inv_expo_list.reserve(SIZE_LARGE);
-    add_from_voxel_map.reserve(SIZE_SMALL);
+    propa_errors.reserve(SIZE_LARGE);//传播误差容器大小设置
+    errors.reserve(SIZE_LARGE);//误差容器大小设置
+    warp_patch.reserve(SIZE_LARGE);//仿射块容器大小设置 
+    search_levels.reserve(SIZE_LARGE);//最佳搜索层级容器大小设置 
+    voxel_points.reserve(SIZE_LARGE);//体素点容器大小设置
+    inv_expo_list.reserve(SIZE_LARGE);//逆曝光容器设置
+    add_from_voxel_map.reserve(SIZE_SMALL);//添加体素地图中点容器大小设置 
   };
 
   void reset()
   {
-    propa_errors.clear();
-    errors.clear();
-    warp_patch.clear();
-    search_levels.clear();
-    voxel_points.clear();
-    inv_expo_list.clear();
-    add_from_voxel_map.clear();
+    propa_errors.clear();//未进行 VIO更新前 视觉地图点仿射到参考图像上的图像块像素与当前图像上图像块的像素光度误差
+    errors.clear();//进行 VIO 更新后 视觉地图点仿射到参考图像上的图像块像素与当前图像上图像块的像素光度误差。
+    warp_patch.clear();//视觉地图点仿射到参考图像上的图像块像素
+    search_levels.clear();//基于仿射变换阵筛选的 search_level 要么是 0 要么是1
+    voxel_points.clear();//在当前视野内的体素点
+    inv_expo_list.clear();//当前视野内点对应的参考图像块逆曝光时间，
+    add_from_voxel_map.clear();//候选视觉地图点的体素点，专门给体素射线上的点用的。
   }
 };
 

@@ -152,8 +152,8 @@ public:
       : max_layer_(max_layer), layer_(layer), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
         planer_threshold_(planer_threshold)
   {
-    temp_points_.clear();
-    octo_state_ = 0;
+    temp_points_.clear();//清空
+    octo_state_ = 0;//
     new_points_ = 0;
     update_size_threshold_ = 5;
     init_octo_ = false;
@@ -218,9 +218,10 @@ public:
   std::vector<PointToPlane> ptpl_list_;
 
   VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &voxel_map)
-      : config_setting_(config_setting), voxel_map_(voxel_map)
+      : config_setting_(config_setting), voxel_map_(voxel_map)//根据体素地图配置和八叉树节点初始化体素地图管理器
   {
-    current_frame_id_ = 0;
+    current_frame_id_ = 0;//初始化当前帧id为0 
+    //将体素地图管理器中的点云指针进行初始化
     feats_undistort_.reset(new PointCloudXYZI());
     feats_down_body_.reset(new PointCloudXYZI());
     feats_down_world_.reset(new PointCloudXYZI());

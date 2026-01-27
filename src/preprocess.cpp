@@ -54,7 +54,7 @@ void Preprocess::set(bool feat_en, int lid_type, double bld, int pfilt_num)
 void Preprocess::process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
 {
   avia_handler(msg);
-  *pcl_out = pl_surf;
+  *pcl_out = pl_surf;//实际上，如果不提取点云特征的话，pl_surf存的就是跳过point_filter_num的所有点。
 }
 
 void Preprocess::process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
@@ -89,31 +89,31 @@ void Preprocess::process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointClo
     printf("Error LiDAR Type: %d \n", lidar_type);
     break;
   }
-  *pcl_out = pl_surf;
+  *pcl_out = pl_surf;//这是解引用
 }
 
 void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
 {
   pl_surf.clear();
   pl_corn.clear();
-  pl_full.clear();
-  double t1 = omp_get_wtime();
-  int plsize = msg->point_num;
+  pl_full.clear();//清空三种点云类型：平面，角点，所有点 
+  double t1 = omp_get_wtime();//记录当前时刻
+  int plsize = msg->point_num;//当前帧点的数量并打印 int plsize = msg->point_num; 
   printf("[ Preprocess ] Input point number: %d \n", plsize);
   // printf("point_filter_num: %d\n", point_filter_num);
 
   pl_corn.reserve(plsize);
   pl_surf.reserve(plsize);
-  pl_full.resize(plsize);
+  pl_full.resize(plsize);//根据点数设置点云容量 
 
   for (int i = 0; i < N_SCANS; i++)
   {
     pl_buff[i].clear();
     pl_buff[i].reserve(plsize);
-  }
-  uint valid_num = 0;
+  }//根据点云线数对每个线设置等同的容量  pl_buff每个线束的点云，分别存入
+  uint valid_num = 0;//有效线数
 
-  if (feature_enabled)
+  if (feature_enabled)//默认不进行特征提取，可以忽略
   {
     for (uint i = 1; i < plsize; i++)
     {
@@ -165,7 +165,7 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
   {
     for (uint i = 0; i < plsize; i++)
     {
-      if ((msg->points[i].line < N_SCANS)) // && ((msg->points[i].tag & 0x30) == 0x10))
+      if ((msg->points[i].line < N_SCANS)) // && ((msg->points[i].tag & 0x30) == 0x10))//仅做行号检查
       {
         valid_num++;
 
@@ -173,12 +173,15 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
         pl_full[i].y = msg->points[i].y;
         pl_full[i].z = msg->points[i].z;
         pl_full[i].intensity = msg->points[i].reflectivity;
-        pl_full[i].curvature = msg->points[i].offset_time / float(1000000); // use curvature as time of each laser points
+        pl_full[i].curvature = msg->points[i].offset_time / float(1000000); // 将纳秒级时间偏移转换为秒，并存入 curvature 字段
 
-        if (i == 0)
+        if (i == 0)//如果第0个点的时间偏移量正常(<1s)，就用它；否则归零。
           pl_full[i].curvature = fabs(pl_full[i].curvature) < 1.0 ? pl_full[i].curvature : 0.0;
-        else
+        else//处理后续点
         {
+          // 核心判断：当前点时间 - 上一个点时间
+          // 如果时间差 < 1.0s，说明连续性正常，使用当前点时间。
+          // 如果时间差 > 1.0s (发生异常跳变，例如硬件时钟复位)，则人工制造时间。
           // if(fabs(pl_full[i].curvature - pl_full[i - 1].curvature) > 1.0) ROS_ERROR("time jump: %f", fabs(pl_full[i].curvature - pl_full[i - 1].curvature));
           pl_full[i].curvature = fabs(pl_full[i].curvature - pl_full[i - 1].curvature) < 1.0
                                      ? pl_full[i].curvature
@@ -709,7 +712,7 @@ void Preprocess::xt32_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
 void Preprocess::robosense_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
-  pl_surf.clear();
+  pl_surf.clear();//清空
 
   pcl::PointCloud<robosense_ros::Point> pl_orig;
   pcl::fromROSMsg(*msg, pl_orig);
@@ -735,7 +738,7 @@ void Preprocess::robosense_handler(const sensor_msgs::PointCloud2::ConstPtr &msg
     added_pt.y = pt.y;
     added_pt.z = pt.z;
     added_pt.intensity = pt.intensity;
-    added_pt.curvature = (pt.timestamp - time_head) * 1000.0;
+    added_pt.curvature = (pt.timestamp - time_head)*1000;//这里是否需要*1000
     pl_surf.points.push_back(added_pt);
   }
   std::sort(pl_surf.points.begin(), pl_surf.points.end(), [](const PointType &a, const PointType &b) {

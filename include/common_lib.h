@@ -74,7 +74,7 @@ struct MeasureGroup
 
 struct LidarMeasureGroup
 {
-  double lidar_frame_beg_time;
+  double lidar_frame_beg_time;//开始的
   double lidar_frame_end_time;
   double last_lio_update_time;
   PointCloudXYZI::Ptr lidar;

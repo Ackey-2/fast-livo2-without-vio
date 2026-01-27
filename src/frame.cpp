@@ -33,18 +33,18 @@ Frame::~Frame()
   std::for_each(fts_.begin(), fts_.end(), [&](Feature *i) { delete i; });
 }
 
-void Frame::initFrame(const cv::Mat &img)
+void Frame::initFrame(const cv::Mat &img)//
 {
-  if (img.empty()) { throw std::runtime_error("Frame: provided image is empty"); }
+  if (img.empty()) { throw std::runtime_error("Frame: provided image is empty"); }//判断图像是不是空的
 
-  if (img.cols != cam_->width() || img.rows != cam_->height())
+  if (img.cols != cam_->width() || img.rows != cam_->height())//判断实际图像长宽与预定义相机模型是否匹配, 否则报错
   {
     throw std::runtime_error("Frame: provided image has not the same size as the camera model");
   }
 
-  if (img.type() != CV_8UC1) { throw std::runtime_error("Frame: provided image is not grayscale"); }
+  if (img.type() != CV_8UC1) { throw std::runtime_error("Frame: provided image is not grayscale"); }//、判断图像是否已转为灰度图，否则报错
 
-  img_ = img;
+  img_ = img;//将图像给新帧的成员img_ 
 }
 
 /// Utility functions for the Frame class

@@ -193,6 +193,6 @@ private:
   double smallp_intersect, smallp_ratio;
   double vx, vy, vz;
 };
-typedef std::shared_ptr<Preprocess> PreprocessPtr;
+typedef std::shared_ptr<Preprocess> PreprocessPtr;//后续代码中凡是出现 PreprocessPtr 的地方，编译器都自动替换为 std::shared_ptr<Preprocess>。
 
 #endif // PREPROCESS_H_

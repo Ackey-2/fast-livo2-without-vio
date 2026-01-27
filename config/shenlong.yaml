@@ -7,8 +7,10 @@ common:
   ros_driver_bug_fix: false
 
 extrin_calib:
-  extrinsic_T: [0.335, 0.11, 0.07]
-  extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  extrinsic_T: [1.834, -0.29, 0.45]
+  extrinsic_R: [0, -1, 0,
+               1,  0, 0,
+               0,  0, 1]
   # NTU_VIRAL
   Rcl: [0.0218308, 0.99976, -0.00201407,
         -0.0131205, 0.00230088, 0.999911,
@@ -17,16 +19,16 @@ extrin_calib:
 
 time_offset:
   lidar_time_offset: 0
-  imu_time_offset: -0.02
+  imu_time_offset: 0.0
   img_time_offset: 0.0
   exposure_time_init: 0.0
 
 preprocess:
-  point_filter_num: 7
+  point_filter_num: 1
   filter_size_surf: 0.1
   lidar_type: 7 # Ouster
   scan_line: 16
-  blind: 1.0
+  blind: 2
 
 vio:
   max_iterations: 5
@@ -43,8 +45,8 @@ vio:
 imu:
   imu_en: true
   imu_int_frame: 30
-  acc_cov: 0.2 # 0.2
-  gyr_cov: 2 # 0.5
+  acc_cov: 1.5 # 1.5
+  gyr_cov: 1.5 # 1.5
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
 
@@ -81,7 +83,7 @@ evo:
 pcd_save:
   pcd_save_en: true
   colmap_output_en: false # need to set interval = -1
-  filter_size_pcd: 0.3
+  filter_size_pcd: 0.8
   interval: -1
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
