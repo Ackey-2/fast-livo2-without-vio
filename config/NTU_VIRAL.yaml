@@ -59,7 +59,7 @@ lio:
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
-  map_sliding_en: false
+  map_sliding_en: true
   half_map_size: 100
   sliding_thresh: 8
 
