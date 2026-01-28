@@ -464,8 +464,8 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     /*** Iterative Kalman Filter Update ***/
     MatrixXd K(DIM_STATE, effct_feat_num_);//生成一个所有点的增益K矩阵
     // auto &&Hsub_T = Hsub.transpose();
-    // auto &&HTz = Hsub_T_R_inv * meas_vec;
-    Eigen::VectorXd HTz = Hsub_T_R_inv * meas_vec;
+     auto &&HTz = Hsub_T_R_inv * meas_vec;
+    // Eigen::VectorXd HTz = Hsub_T_R_inv * meas_vec;
     // fout_dbg<<"HTz: "<<HTz<<endl;
     H_T_H.block<6, 6>(0, 0) = Hsub_T_R_inv * Hsub;//$H^T R^{-1} H$
     // EigenSolver<Matrix<double, 6, 6>> es(H_T_H.block<6,6>(0,0));
@@ -473,61 +473,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);//增益
     auto vec = state_propagat - state_;//计算传播的先验状态和当前迭代状态的差
     
-    // ==================== [Anti-Explosion Ground Constraint] ====================
-// 核心思想：限幅 (Clamping)。防止单次修正过大导致系统 NaN。
 
-// 1. 安全检查：如果状态已经是 NaN，直接跳过，防止程序崩溃
-if (!std::isfinite(state_.pos_end(0)) || !std::isfinite(state_.pos_end(1)) || !std::isfinite(state_.pos_end(2))) {
-    // 状态已死，无法抢救，跳过约束等待重置
-} 
-else {
-    // 2. 参数设置
-    // 权重给适中，不要太大，给 1000 左右即可 (之前给 10万 太激进了)
-    double constraint_weight = 1000.0; 
-    // 【关键】最大单帧修正量：0.5 度 (约 0.008 弧度)
-    // 这就是“防爆阀”，不管误差多大，一次只修这么点
-    double max_correction_rad = 0.5 * M_PI / 180.0; 
-
-    // 3. 计算 Pitch 残差
-    // 此时 rot_end 必须是有效的
-    double pitch_curr_rad = 0.0;
-    // 使用 asin 提取 Pitch，避免 eulerAngles 的多解问题导致突变
-    // R(2,0) = -sin(pitch)  =>  pitch = -asin(R(2,0))
-    double sin_pitch = -state_.rot_end(2, 0);
-    // 保护 asin 输入范围
-    if (sin_pitch > 1.0) sin_pitch = 1.0;
-    if (sin_pitch < -1.0) sin_pitch = -1.0;
-    pitch_curr_rad = std::asin(sin_pitch);
-
-    // 目标是 0，所以残差 = 0 - 当前
-    double pitch_residual = 0.0 - pitch_curr_rad;
-
-    // 4. 【核心步骤】残差限幅 (Saturation)
-    // 如果误差是 26度，我骗 EKF 说误差只有 0.5度
-    if (pitch_residual > max_correction_rad) pitch_residual = max_correction_rad;
-    if (pitch_residual < -max_correction_rad) pitch_residual = -max_correction_rad;
-
-    // 5. 计算 Z 轴残差 (同样限幅)
-    double z_curr = state_.pos_end(2);
-    double z_residual = 0.0 - z_curr;
-    double max_z_correction = 0.1; // 每次最多修 0.1 米
-    if (z_residual > max_z_correction) z_residual = max_z_correction;
-    if (z_residual < -max_z_correction) z_residual = -max_z_correction;
-
-    // 6. 注入约束
-    // 确保索引正确: Pitch(1), Z(5)
-    int idx_pitch = 1; 
-    int idx_z = 5;
-
-    // 叠加信息矩阵 (H^T * W * H)
-    H_T_H(idx_pitch, idx_pitch) += constraint_weight;
-    H_T_H(idx_z, idx_z)         += constraint_weight;
-
-    // 叠加信息向量 (H^T * W * r)
-    HTz(idx_pitch) += constraint_weight * pitch_residual;
-    HTz(idx_z)     += constraint_weight * z_residual;
-}
-// ==================== [End Constraint] ====================
 
 
 
