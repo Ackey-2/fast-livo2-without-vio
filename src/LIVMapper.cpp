@@ -561,6 +561,7 @@ void LIVMapper::run()
 //调函数就返回了，而是会处理当时队列中存在的所有回调函数。 
     if (!sync_packages(LidarMeasures)) //将数据缓存器中同一时间区间的lidar、Imu以及image都取出，用于后续状态估计更新
     {
+      //std::cout<<LidarMeasures.measures.size()<<std::endl;
       rate.sleep();
       continue;
     }

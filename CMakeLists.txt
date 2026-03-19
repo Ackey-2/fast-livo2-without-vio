@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 2.8.3)
 project(fast_livo)
 
 set(CMAKE_BUILD_TYPE "release")
+# set(CMAKE_BUILD_TYPE Debug)
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 
 set(CMAKE_CXX_STANDARD 17)

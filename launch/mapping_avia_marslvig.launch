@@ -1,8 +1,8 @@
 <launch>
 <!-- Launch file for Livox AVIA LiDAR -->
-
+	
 	<arg name="rviz" default="true" />
-
+	<param name="/use_sim_time" value="true" />
 	<rosparam command="load" file="$(find fast_livo)/config/MARS_LVIG.yaml" />
 
 	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">

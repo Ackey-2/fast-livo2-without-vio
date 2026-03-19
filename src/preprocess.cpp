@@ -716,7 +716,7 @@ void Preprocess::robosense_handler(const sensor_msgs::PointCloud2::ConstPtr &msg
 
   pcl::PointCloud<robosense_ros::Point> pl_orig;
   pcl::fromROSMsg(*msg, pl_orig);
-  std::cout<<"pl_orig.size()  "<<pl_orig.size()<<std::endl;
+  //std::cout<<"pl_orig.size()  "<<pl_orig.size()<<std::endl;
   int plsize = pl_orig.size();
   pl_surf.reserve(plsize);
 

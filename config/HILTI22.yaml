@@ -2,7 +2,7 @@ common:
   img_topic: "/alphasense/cam0/image_raw"
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
-  img_en: 1
+  img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
 
@@ -67,7 +67,7 @@ lio:
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
-  map_sliding_en: false
+  map_sliding_en: true
   half_map_size: 100
   sliding_thresh: 8
 
@@ -87,9 +87,9 @@ evo:
   pose_output_en: true
 
 pcd_save:
-  pcd_save_en: false
+  pcd_save_en: true
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
-  interval: -1
+  interval: 500
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

@@ -1,13 +1,13 @@
 common:
-  img_topic: "/left_camera/image"
-  lid_topic: "/livox/lidar"
-  imu_topic: "/livox/imu"
+  img_topic: "/camera/color/image_raw"
+  lid_topic: "/livox/mid360/lidar"
+  imu_topic: "/livox/mid360/imu"
   img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
 
 extrin_calib:
-  extrinsic_T: [0.04165, 0.02326, -0.0284]
+  extrinsic_T: [  0.041, 0.02329, -0.028 ]
   extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   Rcl: [0.00610193,-0.999863,-0.0154172,
         -0.00615449,0.0153796,-0.999863,
@@ -24,7 +24,7 @@ preprocess:
   filter_size_surf: 0.1
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6
-  blind: 0.8
+  blind: 0.5
 
 vio:
   max_iterations: 5
@@ -77,7 +77,7 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  pcd_save_en: true
+  pcd_save_en: false
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
   interval: -1

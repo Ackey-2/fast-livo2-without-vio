@@ -554,7 +554,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
   }
 
   MeasureGroup meas = lidar_meas.measures.back();//获得激光雷达测量组中最新的IMU队列 
-
+  //std::cout<<meas.imu.size()<<std::endl;
   if (imu_need_init)
   {
     double pcl_end_time = lidar_meas.lio_vio_flg == LIO ? meas.lio_time : meas.vio_time;
