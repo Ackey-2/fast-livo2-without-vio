@@ -14,19 +14,17 @@ which is included as part of this source code package.
 #define LIV_MAPPER_H
 
 #include "IMU_Processing.h"
-#include "vio.h"
 #include "preprocess.h"
-#include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
-#include <vikit/camera_loader.h>
-
+#include "voxel_map.h"  
+#include <pcl/filters/voxel_grid.h>
 class LIVMapper
 {
 public:
   LIVMapper(ros::NodeHandle &nh);
   ~LIVMapper();
-  void initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_transport::ImageTransport &it);
+  void initializeSubscribersAndPublishers(ros::NodeHandle &nh);
   void initializeComponents();
   void initializeFiles();
   void run();
@@ -47,7 +45,7 @@ public:
   void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg);
   void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_in);
   void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in);
-  void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager);
+  void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes);
   void publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list);
   void publish_odometry(const ros::Publisher &pubOdomAftMapped);
   void publish_mavros(const ros::Publisher &mavros_pose_publisher);
@@ -64,7 +62,7 @@ public:
   std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map;
   
   string root_dir;
-  string lid_topic, imu_topic, seq_name, img_topic;
+  string lid_topic, imu_topic, seq_name;
   V3D extT;
   M3D extR;
 
@@ -100,30 +98,22 @@ public:
 
   bool lidar_pushed = false, imu_en, gravity_est_en, flg_reset = false, ba_bg_est_en = true;
   bool dense_map_en = false;
-  int img_en = 1, imu_int_frame = 3;
-  bool normal_en = true;
-  bool exposure_estimate_en = false;
-  double exposure_time_init = 0.0;
-  bool inverse_composition_en = false;
-  bool raycast_en = false;
+  int  imu_int_frame = 3;
   int lidar_en = 1;
   bool is_first_frame = false;
-  int grid_size, patch_size, grid_n_width, grid_n_height, patch_pyrimid_level;
-  double outlier_threshold;
+  int grid_size, grid_n_width, grid_n_height ;
+
   double plot_time;
   int frame_cnt;
-  double img_time_offset = 0.0;
   deque<PointCloudXYZI::Ptr> lid_raw_data_buffer;
   deque<double> lid_header_time_buffer;
   deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
   deque<cv::Mat> img_buffer;
   deque<double> img_time_buffer;
-  vector<pointWithVar> _pv_list;
   vector<double> extrinT;
   vector<double> extrinR;
-  vector<double> cameraextrinT;
-  vector<double> cameraextrinR;
-  double IMG_POINT_COV;
+
+
 
   PointCloudXYZI::Ptr visual_sub_map;
   PointCloudXYZI::Ptr feats_undistort;
@@ -152,13 +142,12 @@ public:
   PreprocessPtr p_pre;
   ImuProcessPtr p_imu;
   VoxelMapManagerPtr voxelmap_manager;
-  VIOManagerPtr vio_manager;
+
 
   ros::Publisher plane_pub;
   ros::Publisher voxel_pub;
   ros::Subscriber sub_pcl;
   ros::Subscriber sub_imu;
-  ros::Subscriber sub_img;
   ros::Publisher pubLaserCloudFullRes;
   ros::Publisher pubNormal;
   ros::Publisher pubSubVisualMap;
@@ -177,6 +166,6 @@ public:
   double aver_time_consu = 0;
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
-  bool colmap_output_en = false;
+
 };
 #endif

@@ -68,7 +68,7 @@ void ImuProcess::disable_bias_est()
 void ImuProcess::disable_exposure_est()
 {
   cout << "Online Time Offset Estimation Disabled !!!!!" << endl;
-  exposure_estimate_en = false;
+
 }
 
 void ImuProcess::set_extrinsic(const MD(4, 4) & T)
@@ -95,7 +95,7 @@ void ImuProcess::set_acc_cov_scale(const V3D &scaler) { cov_acc = scaler; }
 
 void ImuProcess::set_gyr_bias_cov(const V3D &b_g) { cov_bias_gyr = b_g; }
 
-void ImuProcess::set_inv_expo_cov(const double &inv_expo) { cov_inv_expo = inv_expo; }
+
 
 void ImuProcess::set_acc_bias_cov(const V3D &b_a) { cov_bias_acc = b_a; }
 
@@ -394,7 +394,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
 
       // tau = 1.0 / (0.25 * sin(2 * CV_PI * 0.5 * imu_time) + 0.75);
       // F_x(6,6) = 0.25 * 2 * CV_PI * 0.5 * cos(2 * CV_PI * 0.5 * imu_time) * (-tau*tau); F_x(18,18) = 0.00001;
-      if (exposure_estimate_en) cov_w(6, 6) = cov_inv_expo * dt * dt;
+
       cov_w.block<3, 3>(0, 0).diagonal() = cov_gyr * dt * dt;
       cov_w.block<3, 3>(7, 7) = R_imu * cov_acc.asDiagonal() * R_imu.transpose() * dt * dt;
       cov_w.block<3, 3>(10, 10).diagonal() = cov_bias_gyr * dt * dt; // bias gyro covariance

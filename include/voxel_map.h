@@ -177,7 +177,7 @@ public:
   void init_octo_tree();
   void cut_octo_tree();
   void UpdateOctoTree(const pointWithVar &pv);
-
+  
   VoxelOctoTree *find_correspond(Eigen::Vector3d pw);
   VoxelOctoTree *Insert(const pointWithVar &pv);
 };

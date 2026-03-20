@@ -36,17 +36,7 @@ preprocess:
   scan_line: 32
   blind: 0.6 # 0.1 0.3
  
-vio:
-  max_iterations: 5
-  outlier_threshold: 500
-  img_point_cov: 1000
-  patch_size: 8
-  patch_pyrimid_level: 4
-  normal_en: true
-  raycast_en: false
-  inverse_composition_en: false
-  exposure_estimate_en: true
-  inv_expo_cov: 0.1
+
 
 imu:
   imu_en: true
@@ -88,7 +78,6 @@ evo:
 
 pcd_save:
   pcd_save_en: true
-  colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
   interval: 500
   # how many LiDAR frames saved in each pcd file;

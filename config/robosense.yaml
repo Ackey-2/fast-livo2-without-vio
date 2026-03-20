@@ -1,27 +1,18 @@
 common:
-  img_topic: "/left/image_raw"
   lid_topic: "/scan"
   imu_topic: "/IMU"
-  img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
 
 extrin_calib:
-  extrinsic_T: [1.834, -0.29, 0.45]
-  extrinsic_R: [0, -1, 0,
-               1,  0, 0,
+  extrinsic_T: [0.5, 0, 0.45]
+  extrinsic_R: [1, 0, 0,
+               0,  1, 0,
                0,  0, 1]
-  # NTU_VIRAL
-  Rcl: [0.0218308, 0.99976, -0.00201407,
-        -0.0131205, 0.00230088, 0.999911,
-        0.999676, -0.0218025, 0.0131676]
-  Pcl: [0.122993,  0.0398643, -0.0577101]
 
 time_offset:
   lidar_time_offset: 0
   imu_time_offset: 0.0
-  img_time_offset: 0.0
-  exposure_time_init: 0.0
 
 preprocess:
   point_filter_num: 1
@@ -30,24 +21,12 @@ preprocess:
   scan_line: 16
   blind: 2
 
-vio:
-  max_iterations: 5
-  outlier_threshold: 1000 # 78 100 156 #100 200 500 700 infinite
-  img_point_cov: 100 # 100 1000 
-  patch_size: 8
-  patch_pyrimid_level: 3
-  normal_en: true
-  raycast_en: false
-  inverse_composition_en: false
-  exposure_estimate_en: true
-  inv_expo_cov: 0.1
-
 imu:
   imu_en: true
   imu_int_frame: 30
   acc_cov: 1.5 # 1.5
-  gyr_cov: 1.5 # 1.5
-  b_acc_cov: 0.0001 # 0.1
+  gyr_cov: 0.15 # 1.5
+  b_acc_cov: 0.01 # 0.1
   b_gyr_cov: 0.0001 # 0.1
 
 lio:
@@ -61,9 +40,9 @@ lio:
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
-  map_sliding_en: false
-  half_map_size: 100
-  sliding_thresh: 8
+  map_sliding_en: true
+  half_map_size: 50
+  sliding_thresh: 2
 
 uav:
   imu_rate_odom: false
@@ -82,8 +61,7 @@ evo:
 
 pcd_save:
   pcd_save_en: true
-  colmap_output_en: false # need to set interval = -1
-  filter_size_pcd: 0.8
-  interval: -1
+  filter_size_pcd: 0.1
+  interval: 200
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

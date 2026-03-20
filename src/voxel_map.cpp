@@ -498,6 +498,16 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
               << std::endl;
       }
 
+    int z_constraint_count = 0;
+    for (const auto &ptpl : ptpl_list_)
+    {
+      // 法向量接近竖直 = 对 Z 有约束
+      if (fabs(ptpl.normal_[2]) > 0.7)
+        z_constraint_count++;
+    }
+    printf("[ LIO ] Z-constraint planes: %d / %d (%.1f%%)\n",
+          z_constraint_count, effct_feat_num_,
+          100.0 * z_constraint_count / effct_feat_num_);
 
     state_ += solution;//更新状态了
     auto rot_add = solution.block<3, 1>(0, 0);
