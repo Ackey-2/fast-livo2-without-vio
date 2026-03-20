@@ -2,7 +2,6 @@ common:
   img_topic: "/alphasense/cam0/image_raw"
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
-  img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
 
@@ -17,16 +16,10 @@ extrin_calib:
   #               -0.9999762249571927, -0.006612093869054189, -0.0019569708811106104, 
   #               0.001965243352927244, -0.0012448467359610184, -0.9999972940839232]
 
-  # Hilti
-  Rcl: [ -0.999926,  -0.00670802, 0.0101073,
-         -0.0100912, -0.00242564, -0.999946,
-          0.00673218,-0.999975, 0.00235777 ]
-  Pcl: [ -0.0549762, 0.0675401, -0.0520599 ]
 
 time_offset:
   imu_time_offset: 0.0
   img_time_offset: 0.0
-  exposure_time_init: 0.0
 
 preprocess:
   hilti_en: true
@@ -56,11 +49,14 @@ lio:
   max_points_num: 100
   layer_init_num: [5, 5, 5, 5, 5]
 
-local_map:  
-  map_sliding_en: true
-  half_map_size: 100
-  sliding_thresh: 8
-
+# local_map:  
+#   map_sliding_en: true
+#   half_map_size: 50
+#   sliding_thresh: 2
+local_map:
+  map_sliding_en: false      # LRU 替代 sliding
+  max_voxel_count: 10000     # 最大体素数量
+  max_memory_mb: 800         # 最大内存 MB
 uav:
   imu_rate_odom: false
   gravity_align_en: false
@@ -79,6 +75,6 @@ evo:
 pcd_save:
   pcd_save_en: true
   filter_size_pcd: 0.15
-  interval: 500
+  interval: 100
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

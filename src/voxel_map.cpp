@@ -546,6 +546,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
   // cout << "[ Mapping ] ekf_time: " << ekf_time << "s, build_residual_time: " << build_residual_time << "s" << endl;
   // cout << "[ Mapping ] ave_ekf_time: " << ave_ekf_time << "s, ave_build_residual_time: " << ave_build_residual_time << "s" << endl;
+  current_frame_id_++;
 }
 
 void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud,
@@ -666,7 +667,10 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
     }//计算体素坐标
     VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);//化整数
     auto iter = voxel_map_.find(position);
-    if (iter != voxel_map_.end()) { voxel_map_[position]->UpdateOctoTree(p_v); }
+    if (iter != voxel_map_.end()) { 
+      iter->second->last_update_frame_ = current_frame_id_;
+      voxel_map_[position]->UpdateOctoTree(p_v);
+       }
     else//如果重来没有创建过，那就现场建一个八叉树
     {
       VoxelOctoTree *octo_tree = new VoxelOctoTree(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
@@ -677,6 +681,8 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
       voxel_map_[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
       voxel_map_[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
       voxel_map_[position]->UpdateOctoTree(p_v);
+      octo_tree->last_access_frame_ = current_frame_id_;      // 加这行
+      octo_tree->last_update_frame_ = current_frame_id_; 
     }
   }
 }
@@ -713,6 +719,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     auto iter = voxel_map_.find(position);//根据该位置，利用哈希表找到其对应的八叉树根节点索引
     if (iter != voxel_map_.end())//判断  是不是有效索引
     {
+      iter->second->last_access_frame_ = current_frame_id_; 
       VoxelOctoTree *current_octo = iter->second;//取出索引对应的八叉树节点
       PointToPlane single_ptpl;
       bool is_sucess = false;

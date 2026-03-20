@@ -147,7 +147,21 @@ public:
   int new_points_;
   bool init_octo_;
   bool update_enable_;
-
+  int last_access_frame_ = 0;   // 最后被访问的帧号
+  int last_update_frame_ = 0;   // 最后被更新的帧号
+  // VoxelOctoTree 类中加：
+  size_t estimateMemory() const
+  {
+    size_t mem = sizeof(*this);
+    mem += sizeof(VoxelPlane);
+    mem += temp_points_.capacity() * sizeof(pointWithVar);
+    for (int i = 0; i < 8; i++)
+    {
+      if (leaves_[i] != nullptr)
+        mem += leaves_[i]->estimateMemory();
+    }
+    return mem;
+  }
   VoxelOctoTree(int max_layer, int layer, int points_size_threshold, int max_points_num, float planer_threshold)
       : max_layer_(max_layer), layer_(layer), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
         planer_threshold_(planer_threshold)
@@ -245,7 +259,84 @@ public:
 
   void mapSliding();
   void clearMemOutOfMap(const int& x_max,const int& x_min,const int& y_max,const int& y_min,const int& z_max,const int& z_min );
+  // VoxelMapManager 类中加：
+  size_t estimateTotalMemory() const
+  {
+    size_t mem = 0;
+    for (const auto &pair : voxel_map_)
+    {
+      mem += sizeof(VOXEL_LOCATION);
+      mem += pair.second->estimateMemory();
+    }
+    return mem;
+  }
 
+void manageMapMemory(int current_frame, size_t max_voxel_count, size_t max_memory_mb)
+{
+  size_t current_memory = estimateTotalMemory();
+  size_t max_memory_bytes = max_memory_mb * 1024 * 1024;
+
+  bool need_cleanup = (voxel_map_.size() > max_voxel_count) || 
+                      (current_memory > max_memory_bytes);
+
+  if (!need_cleanup) return;
+
+  // 1. 收集所有体素的访问时间
+  struct VoxelInfo
+  {
+    VOXEL_LOCATION loc;
+    int last_access;
+    size_t memory;
+  };
+
+  std::vector<VoxelInfo> voxel_list;
+  voxel_list.reserve(voxel_map_.size());
+
+  for (const auto &pair : voxel_map_)
+  {
+    VoxelInfo info;
+    info.loc = pair.first;
+    info.last_access = pair.second->last_access_frame_;
+    info.memory = pair.second->estimateMemory();
+    voxel_list.push_back(info);
+  }
+
+  // 2. 按最后访问时间排序（最旧的在前面）
+  std::sort(voxel_list.begin(), voxel_list.end(),
+    [](const VoxelInfo &a, const VoxelInfo &b)
+    {
+      return a.last_access < b.last_access;
+    });
+
+  // 3. 从最旧的开始删，直到满足限制
+  size_t deleted_count = 0;
+  size_t deleted_memory = 0;
+  size_t target_count = max_voxel_count * 0.7;          // 删到 70%
+  size_t target_memory = max_memory_bytes * 0.7;
+
+  for (const auto &info : voxel_list)
+  {
+    bool count_ok = voxel_map_.size() - deleted_count <= target_count;
+    bool memory_ok = current_memory - deleted_memory <= target_memory;
+    if (count_ok && memory_ok) break;
+
+    // 不删最近访问的（保护当前附近的体素）
+    if (current_frame - info.last_access < 10) continue;
+
+    auto it = voxel_map_.find(info.loc);
+    if (it != voxel_map_.end())
+    {
+      delete it->second;
+      voxel_map_.erase(it);
+      deleted_count++;
+      deleted_memory += info.memory;
+    }
+  }
+
+  printf("\033[1;35m[LRU] Cleaned %zu voxels (%.1f MB), remaining: %zu voxels (%.1f MB)\033[0m\n",
+         deleted_count, deleted_memory / (1024.0 * 1024.0),
+         voxel_map_.size(), (current_memory - deleted_memory) / (1024.0 * 1024.0));
+}
 private:
   void GetUpdatePlane(const VoxelOctoTree *current_octo, const int pub_max_voxel_layer, std::vector<VoxelPlane> &plane_list);
 

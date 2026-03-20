@@ -1,5 +1,41 @@
 # FAST-LIVO2
 
+## README
+
+### 基于 FAST-LIVO2 的纯 LIO 系统
+
+本项目基于 [FAST-LIVO2](https://github.com/hku-mars/FAST-LIVO2) 进行改造，剥离视觉模块，保留纯 LiDAR-Inertial Odometry，并针对长时间运行的内存问题进行了优化。
+
+### 主要改动
+
+**1. 剥离视觉模块**
+
+移除 VIO、相机模型、特征跟踪等视觉相关代码，仅保留 LiDAR-Inertial 前端，降低系统复杂度和依赖（不再依赖 `vikit`、`cv_bridge`、`image_transport`）。
+
+**2. 内存泄漏修复**
+
+- 修复 `LidarMeasureGroup::measures` 在 `ONLY_LIO` 模式下只增不清的问题
+- 替换 `pcl::PointCloud::swap()` 为 `clear()`，修复堆损坏
+- 手写体素滤波替代 `pcl::VoxelGrid`，绕开 PCL 1.8 的 Eigen 对齐 bug
+- 减小 ROS 订阅队列大小，防止消息积压
+
+**3. LRU 体素地图管理**
+
+原始的 map sliding 方案在小范围反复运动时无法有效控制内存。引入 LRU 淘汰策略，综合考虑体素的访问时间、空间距离和平面质量进行评分，优先淘汰低分体素，保证内存使用有硬上限。
+
+### 依赖
+
+- ROS (Melodic/Noetic)
+- PCL >= 1.8
+- Eigen3
+- Sophus
+- GTSAM (可选，用于后端优化)
+
+### 致谢
+
+- [FAST-LIVO2](https://github.com/hku-mars/FAST-LIVO2) - HKU MARS Lab
+
+
 ## FAST-LIVO2: Fast, Direct LiDAR-Inertial-Visual Odometry
 
 ### 📢 News

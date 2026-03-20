@@ -241,4 +241,70 @@ auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> 
   return move(rot_kp);
 }
 
+// 在 LIVMapper.h 或 common_lib.h 中加：
+inline void voxelFilterManual(const PointCloudXYZI::Ptr &input,
+                               PointCloudXYZI::Ptr &output,
+                               float leaf_size)
+{
+  output->clear();
+  if (input->empty() || leaf_size < 0.001) 
+  {
+    *output = *input;
+    return;
+  }
+
+  float inv_leaf = 1.0f / leaf_size;
+
+  // 用 unordered_map 做体素哈希
+  struct VoxelKey
+  {
+    int x, y, z;
+    bool operator==(const VoxelKey &o) const { return x == o.x && y == o.y && z == o.z; }
+  };
+  struct VoxelHash
+  {
+    size_t operator()(const VoxelKey &k) const
+    {
+      return ((size_t)k.x * 73856093) ^ ((size_t)k.y * 19349663) ^ ((size_t)k.z * 83492791);
+    }
+  };
+
+  struct VoxelData
+  {
+    float x = 0, y = 0, z = 0, intensity = 0;
+    int count = 0;
+  };
+
+  std::unordered_map<VoxelKey, VoxelData, VoxelHash> voxels;
+  voxels.reserve(input->size() / 4);
+
+  for (const auto &pt : input->points)
+  {
+    VoxelKey key;
+    key.x = static_cast<int>(std::floor(pt.x * inv_leaf));
+    key.y = static_cast<int>(std::floor(pt.y * inv_leaf));
+    key.z = static_cast<int>(std::floor(pt.z * inv_leaf));
+
+    auto &v = voxels[key];
+    v.x += pt.x;
+    v.y += pt.y;
+    v.z += pt.z;
+    v.intensity += pt.intensity;
+    v.count++;
+  }
+
+  output->reserve(voxels.size());
+  for (const auto &pair : voxels)
+  {
+    const auto &v = pair.second;
+    PointType pt;
+    float inv_n = 1.0f / v.count;
+    pt.x = v.x * inv_n;
+    pt.y = v.y * inv_n;
+    pt.z = v.z * inv_n;
+    pt.intensity = v.intensity * inv_n;
+    output->push_back(pt);
+  }
+}
+
 #endif

@@ -294,7 +294,11 @@ void LIVMapper::handleLIO()
   voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
   std::cout << "[ LIO ] Update Voxel Map" << std::endl;
 
-  
+  voxelmap_manager->manageMapMemory(
+  voxelmap_manager->current_frame_id_,
+  10000,    // 最多 1 万个体素
+  800       // 最多 800 MB
+  );
   double t4 = omp_get_wtime();
 
   if(voxelmap_manager->config_setting_.map_sliding_en)//判断 体素管理器的地图滑动使能清除超过某一范围内的所有体素及表索引
@@ -348,20 +352,26 @@ void LIVMapper::handleLIO()
   // printf("measures: %zu, voxel_map: %zu\n",
   //      LidarMeasures.measures.size(),
   //      voxelmap_manager->voxel_map_.size());
-  printf("\033[1;33m[ Memory ] "
-       
+printf("\033[1;33m[ Memory ] "
+       "voxel_map: %zu (%.1f MB) | "
        "measures: %zu | "
        "pcd_buf: %.1f MB | "
        "feats_undist: %zu | "
        "pcl_w_wait: %zu | "
        "pcl_wait: %zu | "
-       "lid_buf: %zu\033[0m\n",
+       "lid_buf: %zu | "
+       "imu_buf: %zu | "
+       "prop_imu_buf: %zu\033[0m\n",
+       voxelmap_manager->voxel_map_.size(),
+       voxelmap_manager->estimateTotalMemory() / (1024.0 * 1024.0),
        LidarMeasures.measures.size(),
        pcl_wait_save_intensity->size() * sizeof(PointType) / (1024.0 * 1024.0),
        feats_undistort->size(),
        pcl_w_wait_pub->size(),
        pcl_wait_pub->size(),
-       lid_raw_data_buffer.size());
+       lid_raw_data_buffer.size(),
+       imu_buffer.size(),
+       prop_imu_buffer.size());
   euler_cur = RotMtoEuler(_state.rot_end);//转为欧拉角 ，将更新后的状态保存到
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
@@ -773,60 +783,152 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
   }
   ROS_ERROR("out sync");
 }
-
-
 void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes)
 {
-  if (pcl_w_wait_pub->empty()) return;//判断pcl_w_wait_pub 是否有点
-  PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB());
+  if (pcl_w_wait_pub->empty()) return;
 
-
-  /*** Publish Frame ***/
   sensor_msgs::PointCloud2 laserCloudmsg;
-
-    pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
-  laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
+  pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);
+  laserCloudmsg.header.stamp = ros::Time::now();
   laserCloudmsg.header.frame_id = "camera_init";
   pubLaserCloudFullRes.publish(laserCloudmsg);
 
-  /**************** save map ****************/
-  /* 1. make sure you have enough memories
-  /* 2. noted that pcd save will influence the real-time performences **/
   if (pcd_save_en)
   {
-    int size = feats_undistort->points.size();
-    PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
     static int scan_wait_num = 0;
 
-
-    
+    // 每帧先滤波再累积
+    if (filter_size_pcd > 0.001)
+    {
+      PointCloudXYZI::Ptr frame_filtered(new PointCloudXYZI());
+      voxelFilterManual(pcl_w_wait_pub, frame_filtered, filter_size_pcd);
+      *pcl_wait_save_intensity += *frame_filtered;
+    }
+    else
+    {
       *pcl_wait_save_intensity += *pcl_w_wait_pub;
-    
+    }
+
     scan_wait_num++;
 
-    if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+    if (pcl_wait_save_intensity->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
     {
       pcd_index++;
-      string all_points_dir(string(string(ROOT_DIR) + "Log/PCD/") + to_string(pcd_index) + string(".pcd"));
-      pcl::PCDWriter pcd_writer;
-      if (pcd_save_en)
-      {
-        cout << "current scan saved to /PCD/" << all_points_dir << endl;
+      string all_points_dir(string(ROOT_DIR) + "Log/PCD/" + to_string(pcd_index) + ".pcd");
 
-        
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
-        PointCloudXYZI().swap(*pcl_wait_save_intensity);
-               
-        Eigen::Quaterniond q(_state.rot_end);
-        fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.w() << " " << q.x() << " " << q.y()
-                     << " " << q.z() << " " << endl;
-        scan_wait_num = 0;
-      }
+      cout << "saved PCD/" << pcd_index << ".pcd"
+           << " points: " << pcl_wait_save_intensity->size() << endl;
+
+      pcl::PCDWriter pcd_writer;
+      pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
+      pcl_wait_save_intensity->clear();
+
+      Eigen::Quaterniond q(_state.rot_end);
+      fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
+                   << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << endl;
+      scan_wait_num = 0;
     }
   }
-  if(laserCloudWorldRGB->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
-  PointCloudXYZI().swap(*pcl_w_wait_pub);
+
+  pcl_w_wait_pub->clear();
+  pcl_wait_pub->clear();
 }
+
+// void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes)
+// {
+//   if (pcl_w_wait_pub->empty()) return;//判断pcl_w_wait_pub 是否有点
+//   PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB());
+
+
+//   /*** Publish Frame ***/
+//   sensor_msgs::PointCloud2 laserCloudmsg;
+
+//     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
+//   laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
+//   laserCloudmsg.header.frame_id = "camera_init";
+//   pubLaserCloudFullRes.publish(laserCloudmsg);
+
+//   /**************** save map ****************/
+//   /* 1. make sure you have enough memories
+//   /* 2. noted that pcd save will influence the real-time performences **/
+//   if (pcd_save_en)
+//   {
+//     int size = feats_undistort->points.size();
+//     PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
+//     static int scan_wait_num = 0;
+
+
+    
+//       *pcl_wait_save_intensity += *pcl_w_wait_pub;
+    
+//     scan_wait_num++;
+
+//     // if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+//     // {
+//     //   pcd_index++;
+//     //   string all_points_dir(string(string(ROOT_DIR) + "Log/PCD/") + to_string(pcd_index) + string(".pcd"));
+//     //   pcl::PCDWriter pcd_writer;
+//     //   if (pcd_save_en)
+//     //   {
+//     //     cout << "current scan saved to /PCD/" << all_points_dir << endl;
+
+        
+//     //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
+//     //     PointCloudXYZI().swap(*pcl_wait_save_intensity);
+               
+//     //     Eigen::Quaterniond q(_state.rot_end);
+//     //     fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.w() << " " << q.x() << " " << q.y()
+//     //                  << " " << q.z() << " " << endl;
+//     //     scan_wait_num = 0;
+//     //   }
+//     // }
+//     if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+// {
+//   pcd_index++;
+//   string all_points_dir(string(string(ROOT_DIR) + "Log/PCD/") + to_string(pcd_index) + string(".pcd"));
+//   pcl::PCDWriter pcd_writer;
+//   if (pcd_save_en)
+//   {
+//     if (pcl_wait_save_intensity->size() > 0)
+//     {
+//       PointCloudXYZI::Ptr cloud_to_save;
+
+//       // 体素滤波（仅当 filter_size_pcd 有效时）
+//       if (filter_size_pcd > 0.001)
+//       {
+//         cloud_to_save.reset(new PointCloudXYZI());
+//         pcl::VoxelGrid<PointType> voxel_filter;
+//         voxel_filter.setInputCloud(pcl_wait_save_intensity);
+//         voxel_filter.setLeafSize(filter_size_pcd, filter_size_pcd, filter_size_pcd);
+//         voxel_filter.filter(*cloud_to_save);
+
+//         cout << "saved to PCD/" << pcd_index << ".pcd"
+//              << " raw: " << pcl_wait_save_intensity->size()
+//              << " filtered: " << cloud_to_save->size() << endl;
+//       }
+//       else
+//       {
+//         cloud_to_save = pcl_wait_save_intensity;
+//         cout << "saved to PCD/" << pcd_index << ".pcd"
+//              << " points: " << cloud_to_save->size() << endl;
+//       }
+
+//       pcd_writer.writeBinary(all_points_dir, *cloud_to_save);
+//     }
+
+//     // 清空缓存
+//     pcl_wait_save_intensity->clear();
+
+//     Eigen::Quaterniond q(_state.rot_end);
+//     fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
+//                  << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << endl;
+//     scan_wait_num = 0;
+//   }
+// }
+//   }
+//   if(laserCloudWorldRGB->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
+//   PointCloudXYZI().swap(*pcl_w_wait_pub);
+// }
 
 
 
