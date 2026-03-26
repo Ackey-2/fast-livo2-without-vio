@@ -404,8 +404,8 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);//累加每个点到平面的距离，做总距离
     }
     effct_feat_num_ = ptpl_list_.size();
-    cout << "[ LIO ] Raw feature num: " << feats_undistort_->size() << ", downsampled feature num:" << feats_down_size_ 
-         << " effective feature num: " << effct_feat_num_ << " average residual: " << total_residual / effct_feat_num_ << endl;
+    // cout << "[ LIO ] Raw feature num: " << feats_undistort_->size() << ", downsampled feature num:" << feats_down_size_ 
+    //      << " effective feature num: " << effct_feat_num_ << " average residual: " << total_residual / effct_feat_num_ << endl;
 
     /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
      * ***/
@@ -490,24 +490,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     // 提取当前的 Pitch 预测值（还没修正前的）
     double current_pitch_deg = state_.rot_end.eulerAngles(0, 1, 2)(1) * 57.29578; 
     // 注意：Eigen的eulerAngles有时候会有多解问题，但这能看个大概趋势
-
-    std::cout << std::fixed << std::setprecision(5) 
-              << " | Pitch_Val: " << current_pitch_deg << " deg"
-              << " | Pitch_Tug: " << pitch_correction_deg << " deg"   // <--- 重点看这个！
-              << " | Z_Tug: "     << z_correction_m << " m"           // <--- 重点看这个！
-              << std::endl;
-      }
-
-    int z_constraint_count = 0;
-    for (const auto &ptpl : ptpl_list_)
-    {
-      // 法向量接近竖直 = 对 Z 有约束
-      if (fabs(ptpl.normal_[2]) > 0.7)
-        z_constraint_count++;
     }
-    printf("[ LIO ] Z-constraint planes: %d / %d (%.1f%%)\n",
-          z_constraint_count, effct_feat_num_,
-          100.0 * z_constraint_count / effct_feat_num_);
 
     state_ += solution;//更新状态了
     auto rot_add = solution.block<3, 1>(0, 0);

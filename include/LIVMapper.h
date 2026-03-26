@@ -19,6 +19,7 @@ which is included as part of this source code package.
 #include <nav_msgs/Path.h>
 #include "voxel_map.h"  
 #include <pcl/filters/voxel_grid.h>
+#include "loop_detector.h"
 class LIVMapper
 {
 public:
@@ -142,8 +143,6 @@ public:
   PreprocessPtr p_pre;
   ImuProcessPtr p_imu;
   VoxelMapManagerPtr voxelmap_manager;
-
-
   ros::Publisher plane_pub;
   ros::Publisher voxel_pub;
   ros::Subscriber sub_pcl;
@@ -166,6 +165,7 @@ public:
   double aver_time_consu = 0;
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
-
+  LoopDetector loop_detector_; 
+  int global_frame_id_ = 0;
 };
 #endif

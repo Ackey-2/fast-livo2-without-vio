@@ -123,12 +123,11 @@ include_directories(
 )
 
 # Add libraries
-
 add_library(lio src/voxel_map.cpp)
 add_library(pre src/preprocess.cpp)
 add_library(imu_proc src/IMU_Processing.cpp)
 add_library(laser_mapping src/LIVMapper.cpp)
-
+add_library(btc src/BTC.cpp)
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)
 
@@ -138,6 +137,7 @@ target_link_libraries(fastlivo_mapping
   lio
   pre
   imu_proc
+  btc
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}

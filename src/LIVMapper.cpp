@@ -11,7 +11,6 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
-
 LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIVMapper 类能够利用这个句柄来订阅话题（Topic）、发布消息、读取参数服务器（Parameter Server）上的配置参数。
     : extT(0, 0, 0),//(外部平移向量): 初始化为零向量 (0, 0, 0)。
       extR(M3D::Identity())//外部旋转矩阵): 初始化为单位矩阵 (Identity Matrix)。
@@ -28,7 +27,6 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIV
   loadVoxelConfig(nh, voxel_config);
  //对相关点云指针进行重置
 
-  
   feats_undistort.reset(new PointCloudXYZI()); //去畸变后的点云
   feats_down_body.reset(new PointCloudXYZI());//降采样后的载体系点云
   feats_down_world.reset(new PointCloudXYZI());//降采样后的世界系点云
@@ -42,6 +40,18 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIV
   initializeComponents();//初始化组件
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "camera_init";
+  
+  LoopDetectorConfig loop_cfg;
+  loop_cfg.win_size       = 10;    // 每10帧合一个关键帧
+  loop_cfg.score_thresh   = 0.1;  // BTC 匹配阈值
+  loop_cfg.is_high_fly    = false;
+  loop_cfg.ds_size        = 0.15;   // 关键帧降采样大小
+  loop_cfg.min_key_dist   = 1.0;   // 最小间距
+  loop_cfg.btc_voxel_size = 0.3;   // ★ BTC内部体素大小，点稀疏就改小
+  loop_cfg.icp_eigval_thresh  = 10.0;
+  loop_cfg.drift_ratio_thresh = 0.05;
+  loop_cfg.cooldown_frames    = 30;
+  loop_detector_.init(loop_cfg);
 }
 
 LIVMapper::~LIVMapper() {}
@@ -292,7 +302,34 @@ void LIVMapper::handleLIO()
     voxelmap_manager->pv_list_[i].var = var;//更新到体素管理器的不确定点列表中 
   }
   voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
-  std::cout << "[ LIO ] Update Voxel Map" << std::endl;
+  //std::cout << "[ LIO ] Update Voxel Map" << std::endl;
+
+
+// ===== 回环检测 =====
+  {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_for_loop(
+        new pcl::PointCloud<pcl::PointXYZI>());
+ 
+    // ★ 用 feats_undistort（密集点云），不用 feats_down_body ★
+    cloud_for_loop->reserve(feats_undistort->size());
+    for (size_t i = 0; i < feats_undistort->size(); i++)
+    {
+      Eigen::Vector3d p_body(feats_undistort->points[i].x,
+                              feats_undistort->points[i].y,
+                              feats_undistort->points[i].z);
+      Eigen::Vector3d p_world = _state.rot_end * (extR * p_body + extT) + _state.pos_end;
+      pcl::PointXYZI pi;
+      pi.x = p_world[0];
+      pi.y = p_world[1];
+      pi.z = p_world[2];
+      pi.intensity = feats_undistort->points[i].intensity;
+      cloud_for_loop->push_back(pi);
+    }
+ 
+    loop_detector_.addScanAndDetect(
+        cloud_for_loop, _state.rot_end, _state.pos_end, global_frame_id_++);
+  }
+  
 
   voxelmap_manager->manageMapMemory(
   voxelmap_manager->current_frame_id_,
@@ -336,42 +373,42 @@ void LIVMapper::handleLIO()
   // printf("\033[1;36m[ LIO mapping time ]: current scan: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n"
   //         "\033[1;36m[ LIO mapping time ]: average: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n",
   //         t2 - t1, t4 - t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m|                         LIO Mapping Time                    |\033[0m\n");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage", "Time (secs)");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "DownSample", t_down - t0);//打印降采样耗时
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "ICP", t2 - t1);//ICP算法耗时
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "updateVoxelMap", t4 - t3);//体素地图更新
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Current Total Time", t4 - t0);//本帧总耗时
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Average Total Time", aver_time_consu);//平均耗时
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-//打印LIO整体信息
-  // printf("measures: %zu, voxel_map: %zu\n",
-  //      LidarMeasures.measures.size(),
-  //      voxelmap_manager->voxel_map_.size());
-printf("\033[1;33m[ Memory ] "
-       "voxel_map: %zu (%.1f MB) | "
-       "measures: %zu | "
-       "pcd_buf: %.1f MB | "
-       "feats_undist: %zu | "
-       "pcl_w_wait: %zu | "
-       "pcl_wait: %zu | "
-       "lid_buf: %zu | "
-       "imu_buf: %zu | "
-       "prop_imu_buf: %zu\033[0m\n",
-       voxelmap_manager->voxel_map_.size(),
-       voxelmap_manager->estimateTotalMemory() / (1024.0 * 1024.0),
-       LidarMeasures.measures.size(),
-       pcl_wait_save_intensity->size() * sizeof(PointType) / (1024.0 * 1024.0),
-       feats_undistort->size(),
-       pcl_w_wait_pub->size(),
-       pcl_wait_pub->size(),
-       lid_raw_data_buffer.size(),
-       imu_buffer.size(),
-       prop_imu_buffer.size());
+//   printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+//   printf("\033[1;34m|                         LIO Mapping Time                    |\033[0m\n");
+//   printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+//   printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage", "Time (secs)");
+//   printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+//   printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "DownSample", t_down - t0);//打印降采样耗时
+//   printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "ICP", t2 - t1);//ICP算法耗时
+//   printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "updateVoxelMap", t4 - t3);//体素地图更新
+//   printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+//   printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Current Total Time", t4 - t0);//本帧总耗时
+//   printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Average Total Time", aver_time_consu);//平均耗时
+//   printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+// //打印LIO整体信息
+//   // printf("measures: %zu, voxel_map: %zu\n",
+//   //      LidarMeasures.measures.size(),
+//   //      voxelmap_manager->voxel_map_.size());
+// printf("\033[1;33m[ Memory ] "
+//        "voxel_map: %zu (%.1f MB) | "
+//        "measures: %zu | "
+//        "pcd_buf: %.1f MB | "
+//        "feats_undist: %zu | "
+//        "pcl_w_wait: %zu | "
+//        "pcl_wait: %zu | "
+//        "lid_buf: %zu | "
+//        "imu_buf: %zu | "
+//        "prop_imu_buf: %zu\033[0m\n",
+//        voxelmap_manager->voxel_map_.size(),
+//        voxelmap_manager->estimateTotalMemory() / (1024.0 * 1024.0),
+//        LidarMeasures.measures.size(),
+//        pcl_wait_save_intensity->size() * sizeof(PointType) / (1024.0 * 1024.0),
+//        feats_undistort->size(),
+//        pcl_w_wait_pub->size(),
+//        pcl_wait_pub->size(),
+//        lid_raw_data_buffer.size(),
+//        imu_buffer.size(),
+//        prop_imu_buffer.size());
   euler_cur = RotMtoEuler(_state.rot_end);//转为欧拉角 ，将更新后的状态保存到
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "

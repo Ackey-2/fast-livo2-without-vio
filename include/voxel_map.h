@@ -333,9 +333,9 @@ void manageMapMemory(int current_frame, size_t max_voxel_count, size_t max_memor
     }
   }
 
-  printf("\033[1;35m[LRU] Cleaned %zu voxels (%.1f MB), remaining: %zu voxels (%.1f MB)\033[0m\n",
-         deleted_count, deleted_memory / (1024.0 * 1024.0),
-         voxel_map_.size(), (current_memory - deleted_memory) / (1024.0 * 1024.0));
+  // printf("\033[1;35m[LRU] Cleaned %zu voxels (%.1f MB), remaining: %zu voxels (%.1f MB)\033[0m\n",
+  //        deleted_count, deleted_memory / (1024.0 * 1024.0),
+  //        voxel_map_.size(), (current_memory - deleted_memory) / (1024.0 * 1024.0));
 }
 private:
   void GetUpdatePlane(const VoxelOctoTree *current_octo, const int pub_max_voxel_layer, std::vector<VoxelPlane> &plane_list);

@@ -1,7 +1,7 @@
 common:
   img_topic: "/camera/color/image_raw"
-  lid_topic: "/livox/mid360/lidar"
-  imu_topic: "/livox/mid360/imu"
+  lid_topic: "/livox/lidar"
+  imu_topic: "/livox/imu"
   img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
@@ -41,11 +41,10 @@ lio:
   max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
 
-local_map:  
-  map_sliding_en: true
-  half_map_size: 50
-  sliding_thresh: 2
-
+local_map:
+  map_sliding_en: false      # LRU 替代 sliding
+  max_voxel_count: 10000     # 最大体素数量
+  max_memory_mb: 800         # 最大内存 MB
 uav:
   imu_rate_odom: false
   gravity_align_en: false

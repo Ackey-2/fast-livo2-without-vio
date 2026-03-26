@@ -1,6 +1,6 @@
 common:
-  lid_topic: "/scan"
-  imu_topic: "/IMU"
+  lid_topic: "/points_raw"
+  imu_topic: "/imu_raw"
   lidar_en: 1
   ros_driver_bug_fix: false
 
@@ -17,7 +17,7 @@ time_offset:
 preprocess:
   point_filter_num: 1
   filter_size_surf: 0.1
-  lidar_type: 7 # Ouster
+  lidar_type: 2 # Ouster
   scan_line: 16
   blind: 2
 
@@ -58,7 +58,7 @@ publish:
 evo:
   seq_name: "eee_01"
   pose_output_en: true
-  
+
 pcd_save:
   pcd_save_en: true
   filter_size_pcd: 0.1
