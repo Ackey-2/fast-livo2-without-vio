@@ -60,7 +60,7 @@ evo:
   pose_output_en: true
   
 pcd_save:
-  pcd_save_en: true
+  pcd_save_en: false
   filter_size_pcd: 0.1
   interval: 200
   # how many LiDAR frames saved in each pcd file;

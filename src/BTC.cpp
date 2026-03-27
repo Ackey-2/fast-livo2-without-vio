@@ -33,9 +33,9 @@ void init_config_setting(ConfigSetting &config_setting, int isHighFly)
     config_setting.std_side_resolution_ = 0.2;
 
     config_setting.skip_near_num_ = 30;
-    config_setting.candidate_num_ = 20;
-    config_setting.rough_dis_threshold_ = 0.01;
-    config_setting.similarity_threshold_ = 0.7;
+    config_setting.candidate_num_ = 50;
+    config_setting.rough_dis_threshold_ = 0.03;
+    config_setting.similarity_threshold_ = 0.6;
     config_setting.icp_threshold_ = 0.15;
     config_setting.normal_threshold_ = 0.2;
     config_setting.dis_threshold_ = 0.5;

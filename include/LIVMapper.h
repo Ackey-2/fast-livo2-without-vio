@@ -19,7 +19,7 @@ which is included as part of this source code package.
 #include <nav_msgs/Path.h>
 #include "voxel_map.h"  
 #include <pcl/filters/voxel_grid.h>
-#include "loop_detector.h"
+#include "BTC.h"
 class LIVMapper
 {
 public:
@@ -52,6 +52,12 @@ public:
   void publish_mavros(const ros::Publisher &mavros_pose_publisher);
   void publish_path(const ros::Publisher pubPath);
   void readParameters(ros::NodeHandle &nh);
+  void loopDetection(
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,
+    const Eigen::Matrix3d& R,
+    const Eigen::Vector3d& p,
+    int id);
+    void cleanupLoopDetection();
   template <typename T> void set_posestamp(T &out);
   template <typename T> void pointBodyToWorld(const Eigen::Matrix<T, 3, 1> &pi, Eigen::Matrix<T, 3, 1> &po);
   template <typename T> Eigen::Matrix<T, 3, 1> pointBodyToWorld(const Eigen::Matrix<T, 3, 1> &pi);
@@ -165,7 +171,71 @@ public:
   double aver_time_consu = 0;
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
-  LoopDetector loop_detector_; 
   int global_frame_id_ = 0;
+
+  struct LoopInputData {
+  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+  Eigen::Matrix3d R;
+  Eigen::Vector3d p;
+  int frame_id;
 };
+  std::thread loop_thread_;
+  std::mutex loop_mtx_;
+  std::condition_variable loop_cv_;
+  std::queue<LoopInputData> loop_queue_;
+  bool loop_running_ = true;
+
+  // 子线程函数
+void loopDetectionThread();
+struct FrameData {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;  // 世界坐标系点云
+    Eigen::Matrix3d R;                            // 旋转
+    Eigen::Vector3d p;                            // 平移
+    int id;                                       // 全局帧 ID
+  };
+std::deque<FrameData> frame_window_;
+
+Eigen::Matrix3d last_kf_R_ = Eigen::Matrix3d::Identity();
+Eigen::Vector3d last_kf_p_ = Eigen::Vector3d::Zero();
+bool has_keyframe_ = false;           // 是否已创建过至少一个关键帧
+double cumulative_distance_ = 0.0;    // 累积行驶距离
+Eigen::Vector3d prev_frame_p_ = Eigen::Vector3d::Zero();  // 上一帧位置（用于累积距离）
+bool has_prev_frame_ = false;
+STDescManager* std_manager_ = nullptr;
+
+  struct KeyframeInfo {
+      int id;                 // 全局帧 ID
+      Eigen::Matrix3d R;      // 位姿旋转
+      Eigen::Vector3d p;      // 位姿平移
+      double cum_dist;        // 创建时的累积行驶距离
+  };
+std::vector<KeyframeInfo> kf_infos_;
+int keyframe_count_ = 0;
+
+int    win_size_          = 10;     // 滑动窗口大小（几帧拼成一个关键帧）
+double kf_angle_thresh_   = 5.0;    // 关键帧角度阈值（度），低于此值不创建关键帧
+double kf_dist_thresh_    = 0.1;    // 关键帧距离阈值（米），低于此值不创建关键帧
+double loop_score_thresh_ = 0.45;   // STD 匹配得分阈值
+double icp_eigval_thresh_ = 14.0;   // ICP 特征值阈值
+double ratio_drift_       = 0.05;   // 漂移比率阈值
+double voxel_size_        = 0.5;    // 体素下采样大小
+void initLoopDetection( ConfigSetting& config) {
+      std_manager_ = new STDescManager(config);
+  }
+};
+static Eigen::Vector3d LogSO3(const Eigen::Matrix3d& R) {
+    double cos_angle = (R.trace() - 1.0) / 2.0;
+    cos_angle = std::max(-1.0, std::min(1.0, cos_angle));
+    double angle = std::acos(cos_angle);
+ 
+    if (angle < 1e-10) {
+        return Eigen::Vector3d::Zero();
+    }
+ 
+    Eigen::Vector3d axis;
+    axis << R(2,1) - R(1,2),
+            R(0,2) - R(2,0),
+            R(1,0) - R(0,1);
+    return axis * (angle / (2.0 * std::sin(angle)));
+}
 #endif

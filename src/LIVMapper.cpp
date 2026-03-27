@@ -9,8 +9,9 @@ Prof. Fu Zhang at <fuzhang@hku.hk>.
 This file is subject to the terms and conditions outlined in the 'LICENSE' file,
 which is included as part of this source code package.
 */
-
+#include "icp_normal.h"
 #include "LIVMapper.h"
+#include "voxel_downsample.h"
 LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIVMapper 类能够利用这个句柄来订阅话题（Topic）、发布消息、读取参数服务器（Parameter Server）上的配置参数。
     : extT(0, 0, 0),//(外部平移向量): 初始化为零向量 (0, 0, 0)。
       extR(M3D::Identity())//外部旋转矩阵): 初始化为单位矩阵 (Identity Matrix)。
@@ -40,21 +41,28 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIV
   initializeComponents();//初始化组件
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "camera_init";
+  ConfigSetting config_setting;
   
-  LoopDetectorConfig loop_cfg;
-  loop_cfg.win_size       = 10;    // 每10帧合一个关键帧
-  loop_cfg.score_thresh   = 0.1;  // BTC 匹配阈值
-  loop_cfg.is_high_fly    = false;
-  loop_cfg.ds_size        = 0.15;   // 关键帧降采样大小
-  loop_cfg.min_key_dist   = 1.0;   // 最小间距
-  loop_cfg.btc_voxel_size = 0.3;   // ★ BTC内部体素大小，点稀疏就改小
-  loop_cfg.icp_eigval_thresh  = 10.0;
-  loop_cfg.drift_ratio_thresh = 0.05;
-  loop_cfg.cooldown_frames    = 30;
-  loop_detector_.init(loop_cfg);
+  init_config_setting(config_setting, 0);  // nh 是你的 ros::NodeHandle，0 是 isHighFly
+
+  printf("[Loop] === ConfigSetting ===\n");
+  printf("[Loop] voxel_size: %.3f\n",        config_setting.voxel_size_);
+  printf("[Loop] plane_det_thre: %.3f\n",    config_setting.plane_detection_thre_);
+  printf("[Loop] candidate_num: %d\n",       config_setting.candidate_num_);
+  printf("[Loop] skip_near_num: %d\n",       config_setting.skip_near_num_);
+  printf("[Loop] descriptor_near_num: %f\n", config_setting.descriptor_near_num_);
+  printf("[Loop] rough_dis_threshold: %.3f\n", config_setting.rough_dis_threshold_);
+  printf("[Loop] similarity_threshold: %.3f\n", config_setting.similarity_threshold_);
+  printf("[Loop] =======================\n");
+  initLoopDetection(config_setting);
+  loop_thread_ = std::thread(&LIVMapper::loopDetectionThread, this);
 }
 
-LIVMapper::~LIVMapper() {}
+LIVMapper::~LIVMapper() {
+  { std::lock_guard<std::mutex> lk(loop_mtx_); loop_running_ = false; }
+    loop_cv_.notify_one();
+    if (loop_thread_.joinable()) loop_thread_.join();
+}
 
 void LIVMapper::readParameters(ros::NodeHandle &nh)
 {
@@ -326,8 +334,11 @@ void LIVMapper::handleLIO()
       cloud_for_loop->push_back(pi);
     }
  
-    loop_detector_.addScanAndDetect(
-        cloud_for_loop, _state.rot_end, _state.pos_end, global_frame_id_++);
+     {
+        std::lock_guard<std::mutex> lk(loop_mtx_);
+        loop_queue_.push({cloud_for_loop, _state.rot_end, _state.pos_end, global_frame_id_++});
+    }
+    loop_cv_.notify_one();  // 唤醒子线程
   }
   
 
@@ -871,102 +882,6 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes)
   pcl_wait_pub->clear();
 }
 
-// void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes)
-// {
-//   if (pcl_w_wait_pub->empty()) return;//判断pcl_w_wait_pub 是否有点
-//   PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB());
-
-
-//   /*** Publish Frame ***/
-//   sensor_msgs::PointCloud2 laserCloudmsg;
-
-//     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
-//   laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
-//   laserCloudmsg.header.frame_id = "camera_init";
-//   pubLaserCloudFullRes.publish(laserCloudmsg);
-
-//   /**************** save map ****************/
-//   /* 1. make sure you have enough memories
-//   /* 2. noted that pcd save will influence the real-time performences **/
-//   if (pcd_save_en)
-//   {
-//     int size = feats_undistort->points.size();
-//     PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
-//     static int scan_wait_num = 0;
-
-
-    
-//       *pcl_wait_save_intensity += *pcl_w_wait_pub;
-    
-//     scan_wait_num++;
-
-//     // if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
-//     // {
-//     //   pcd_index++;
-//     //   string all_points_dir(string(string(ROOT_DIR) + "Log/PCD/") + to_string(pcd_index) + string(".pcd"));
-//     //   pcl::PCDWriter pcd_writer;
-//     //   if (pcd_save_en)
-//     //   {
-//     //     cout << "current scan saved to /PCD/" << all_points_dir << endl;
-
-        
-//     //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
-//     //     PointCloudXYZI().swap(*pcl_wait_save_intensity);
-               
-//     //     Eigen::Quaterniond q(_state.rot_end);
-//     //     fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.w() << " " << q.x() << " " << q.y()
-//     //                  << " " << q.z() << " " << endl;
-//     //     scan_wait_num = 0;
-//     //   }
-//     // }
-//     if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
-// {
-//   pcd_index++;
-//   string all_points_dir(string(string(ROOT_DIR) + "Log/PCD/") + to_string(pcd_index) + string(".pcd"));
-//   pcl::PCDWriter pcd_writer;
-//   if (pcd_save_en)
-//   {
-//     if (pcl_wait_save_intensity->size() > 0)
-//     {
-//       PointCloudXYZI::Ptr cloud_to_save;
-
-//       // 体素滤波（仅当 filter_size_pcd 有效时）
-//       if (filter_size_pcd > 0.001)
-//       {
-//         cloud_to_save.reset(new PointCloudXYZI());
-//         pcl::VoxelGrid<PointType> voxel_filter;
-//         voxel_filter.setInputCloud(pcl_wait_save_intensity);
-//         voxel_filter.setLeafSize(filter_size_pcd, filter_size_pcd, filter_size_pcd);
-//         voxel_filter.filter(*cloud_to_save);
-
-//         cout << "saved to PCD/" << pcd_index << ".pcd"
-//              << " raw: " << pcl_wait_save_intensity->size()
-//              << " filtered: " << cloud_to_save->size() << endl;
-//       }
-//       else
-//       {
-//         cloud_to_save = pcl_wait_save_intensity;
-//         cout << "saved to PCD/" << pcd_index << ".pcd"
-//              << " points: " << cloud_to_save->size() << endl;
-//       }
-
-//       pcd_writer.writeBinary(all_points_dir, *cloud_to_save);
-//     }
-
-//     // 清空缓存
-//     pcl_wait_save_intensity->clear();
-
-//     Eigen::Quaterniond q(_state.rot_end);
-//     fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
-//                  << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << endl;
-//     scan_wait_num = 0;
-//   }
-// }
-//   }
-//   if(laserCloudWorldRGB->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
-//   PointCloudXYZI().swap(*pcl_w_wait_pub);
-// }
-
 
 
 void LIVMapper::publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list)
@@ -1032,4 +947,258 @@ void LIVMapper::publish_path(const ros::Publisher pubPath)
   msg_body_pose.header.frame_id = "camera_init";
   path.poses.push_back(msg_body_pose);
   pubPath.publish(path);
+}
+void LIVMapper::loopDetectionThread() {
+    while (true) {
+        std::unique_lock<std::mutex> lk(loop_mtx_);
+        loop_cv_.wait(lk, [&]{ return !loop_queue_.empty() || !loop_running_; });
+        if (!loop_running_ && loop_queue_.empty()) break;
+        auto [cloud, R, p, id] = loop_queue_.front();
+        loop_queue_.pop();
+        lk.unlock();
+        // 这里不持锁，安心做耗时操作
+        loopDetection(cloud, R, p, id);
+    }
+}
+
+void LIVMapper::loopDetection(
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,
+    const Eigen::Matrix3d& R,
+    const Eigen::Vector3d& p,
+    int id)
+{
+    // ====================================================================
+    // Step 1: 累积行驶距离
+    // ====================================================================
+
+        if (!cloud || cloud->empty()) {
+        printf("[Loop] Skip: empty cloud (id=%d)\n", id);
+        return;
+    }
+
+
+
+    if (has_prev_frame_) {
+        cumulative_distance_ += (p - prev_frame_p_).norm();
+    }
+    prev_frame_p_ = p;
+    has_prev_frame_ = true;
+ 
+    // ====================================================================
+    // Step 2: 将当前帧加入滑动窗口
+    // ====================================================================
+ 
+    FrameData fd;
+    fd.cloud = cloud;
+    fd.R = R;
+    fd.p = p;
+    fd.id = id;
+    frame_window_.push_back(fd);
+ 
+    // ====================================================================
+    // Step 3: 窗口未满，等待更多帧
+    // ====================================================================
+
+ 
+    if ((int)frame_window_.size() < win_size_) {
+        return;
+    }
+ 
+    // ====================================================================
+    // Step 4: 关键帧判定 —— 运动变化是否足够大
+    // ====================================================================
+
+ 
+    if (has_keyframe_) {
+        Eigen::Matrix3d delta_R = last_kf_R_.transpose() * R;
+        double angle_deg = LogSO3(delta_R).norm() * 57.2957795;  // 弧度 → 度
+        double dist = (p - last_kf_p_).norm();
+ 
+        if (angle_deg < kf_angle_thresh_ && dist < kf_dist_thresh_) {
+            // 运动太小，丢弃窗口最早帧，窗口前移一格，等下一帧再判断
+            frame_window_.pop_front();
+            return;
+        }
+    }
+ 
+    // ====================================================================
+    // Step 5: 关键帧点云构建 —— 多帧拼接到当前帧局部坐标系
+    // ====================================================================
+
+    const Eigen::Matrix3d& R_ref = R;   // 参考系旋转 = 当前帧旋转
+    const Eigen::Vector3d& p_ref = p;   // 参考系原点 = 当前帧位置
+ 
+    pcl::PointCloud<pcl::PointXYZI>::Ptr merged_cloud(
+        new pcl::PointCloud<pcl::PointXYZI>());
+ 
+    for (int i = 0; i < win_size_; i++) {
+        const FrameData& frame = frame_window_[i];
+
+        Eigen::Matrix3d delta_R = R_ref.transpose() * frame.R;
+        Eigen::Vector3d delta_p = R_ref.transpose() * (frame.p - p_ref);
+ 
+        for (const auto& pt : frame.cloud->points) {
+
+            Eigen::Vector3d pw(pt.x, pt.y, pt.z);
+            Eigen::Vector3d pl = R_ref.transpose() * (pw - p_ref);
+ 
+            pcl::PointXYZI pt_local;
+            pt_local.x = pl[0];
+            pt_local.y = pl[1];
+            pt_local.z = pl[2];
+            pt_local.intensity = pt.intensity;
+            merged_cloud->push_back(pt_local);
+        }
+    }
+ 
+    // ====================================================================
+    // Step 6: 清空滑动窗口
+    // ====================================================================
+
+ 
+    frame_window_.clear();
+ 
+    // ====================================================================
+    // Step 7: 下采样
+    // ====================================================================
+
+pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_down(
+    new pcl::PointCloud<pcl::PointXYZI>());
+double leaf = voxel_size_ / 10.0;
+voxel_downsample(*merged_cloud, *cloud_down, leaf);
+ 
+    // ====================================================================
+    // Step 8: 提取 STD 描述子
+    // ====================================================================
+
+    // printf("[Loop] Before GenerateSTDescs: cloud_down size=%lu, keyframe_count=%d, std_manager=%p\n",
+    //    cloud_down->size(), keyframe_count_, (void*)std_manager_);
+    std::vector<STD> stds_vec;
+    std_manager_->GenerateSTDescs(cloud_down, stds_vec, keyframe_count_);
+ 
+    // ====================================================================
+    // Step 9: 回环搜索 + ICP 验证 + 漂移检查
+    // ====================================================================
+ 
+    if (keyframe_count_ > 0) {
+        // --- 9a: STD 描述子搜索 ---
+ 
+        std::pair<int, double> search_result(-1, 0);
+        // .first  = 匹配到的关键帧在 plane_cloud_vec_ 中的索引（-1 = 无匹配）
+        // .second = 匹配得分
+ 
+        std::pair<Eigen::Vector3d, Eigen::Matrix3d> loop_transform;
+        // .first  = 相对平移
+        // .second = 相对旋转
+ 
+        std::vector<std::pair<STD, STD>> loop_std_pair;
+        // 匹配的描述子对（仅调试用）
+ 
+        std_manager_->SearchLoop(
+            stds_vec,                                      // 当前关键帧的描述子
+            search_result,                                 // [输出] 匹配结果
+            loop_transform,                                // [输出] 相对变换
+            loop_std_pair,                                 // [输出] 描述子对
+            std_manager_->plane_cloud_vec_.back());        // 当前关键帧的平面点云
+ 
+        if (search_result.first >= 0) {
+            printf("[Loop] STD candidate: current_kf=%d, matched_kf=%d, score=%.3f\n",
+                   keyframe_count_, search_result.first, search_result.second);
+        }
+ 
+        // --- 9b: 得分超过阈值 → ICP 验证 ---
+ 
+        if (search_result.first >= 0 && search_result.second > loop_score_thresh_) {
+ 
+            bool icp_ok = icp_normal(
+                *(std_manager_->plane_cloud_vec_.back()),                 // 当前帧平面点云
+                *(std_manager_->plane_cloud_vec_[search_result.first]),   // 匹配帧平面点云
+                loop_transform,                                           // 相对变换（被精化）
+                icp_eigval_thresh_);                                      // 特征值阈值
+ 
+            if (icp_ok) {
+                // --- 9c: ICP 通过，执行漂移比率检查 ---
+ 
+                // 从 plane_cloud_vec_ 的 header.seq 中取出匹配帧对应的关键帧编号
+                int matched_kf_idx =
+                    std_manager_->plane_cloud_vec_[search_result.first]->header.seq;
+ 
+                if (matched_kf_idx >= 0 && matched_kf_idx < (int)kf_infos_.size()) {
+ 
+                    const KeyframeInfo& matched_kf = kf_infos_[matched_kf_idx];
+ 
+                    // 计算位姿漂移:
+                    //   通过回环变换推算当前帧位置: matched_R * relative_p + matched_p
+                    //   与当前帧里程计位置 p 做差
+                    double drift_p = (matched_kf.R * loop_transform.first
+                                      + matched_kf.p - p).norm();
+ 
+                    // 两帧之间实际行驶的距离
+                    double travel_span = cumulative_distance_ - matched_kf.cum_dist;
+ 
+                    printf("[Loop] ICP passed. drift=%.3fm, span=%.3fm, ratio=%.4f\n",
+                           drift_p, travel_span,
+                           (travel_span > 1e-6) ? drift_p / travel_span : 999.0);
+ 
+                    // 漂移比率检查:
+                    //   drift / travel_span < ratio_drift_ 才接受
+                    //   直觉: 走了 100m 漂移 3m → 0.03 < 0.05 → 合理
+                    //         走了 5m 漂移 3m   → 0.60 > 0.05 → 不合理（可能误匹配）
+                    if (travel_span > 1e-3 && drift_p / travel_span < ratio_drift_) {
+                        printf("[Loop] ===== LOOP DETECTED =====\n");
+                        printf("[Loop]   current  kf: %d  (id=%d, pos=[%.2f, %.2f, %.2f])\n",
+                               keyframe_count_, id, p[0], p[1], p[2]);
+                        printf("[Loop]   matched  kf: %d  (id=%d, pos=[%.2f, %.2f, %.2f])\n",
+                               matched_kf_idx, matched_kf.id,
+                               matched_kf.p[0], matched_kf.p[1], matched_kf.p[2]);
+                        printf("[Loop]   score=%.3f, drift=%.3fm\n",
+                               search_result.second, drift_p);
+                        printf("[Loop] =========================\n");
+                    } else {
+                        printf("[Loop] Rejected: drift ratio too high\n");
+                    }
+ 
+                } else {
+                    printf("[Loop] Warning: matched_kf_idx=%d out of range\n", matched_kf_idx);
+                }
+ 
+            } else {
+                printf("[Loop] ICP verification failed\n");
+            }
+        }
+    }
+ 
+    // ====================================================================
+    // Step 10: 将当前帧的描述子加入数据库 & 记录关键帧信息
+    // ====================================================================
+ 
+    // 描述子入库: 后续帧就能和当前关键帧做匹配了
+    std_manager_->AddSTDescs(stds_vec);
+ 
+    // 记录关键帧信息（位姿 + 累积距离），用于后续的漂移比率检查
+    KeyframeInfo info;
+    info.id       = id;
+    info.R        = R;
+    info.p        = p;
+    info.cum_dist = cumulative_distance_;
+    kf_infos_.push_back(info);
+ 
+    // 更新上一关键帧位姿（下次 Step 4 要用）
+    last_kf_R_ = R;
+    last_kf_p_ = p;
+    has_keyframe_ = true;
+ 
+    keyframe_count_++;
+ 
+    // printf("[Loop] Keyframe %d created (id=%d, pos=[%.2f, %.2f, %.2f], total_dist=%.2fm)\n",
+    //        keyframe_count_ - 1, id, p[0], p[1], p[2], cumulative_distance_);
+}
+
+void LIVMapper::cleanupLoopDetection() {
+    if (std_manager_) {
+        delete std_manager_;
+        std_manager_ = nullptr;
+    }
+    kf_infos_.clear();
+    frame_window_.clear();
 }
