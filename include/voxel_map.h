@@ -230,6 +230,7 @@ public:
   std::vector<M3D> body_cov_list_;
   std::vector<pointWithVar> pv_list_;
   std::vector<PointToPlane> ptpl_list_;
+  std::vector<bool> useful_ptpl_;   // 和 feats_down_body_ 同 size，true=Surf（匹配到平面），false=Corner
 
   VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &voxel_map)
       : config_setting_(config_setting), voxel_map_(voxel_map)//根据体素地图配置和八叉树节点初始化体素地图管理器

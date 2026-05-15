@@ -737,10 +737,10 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   }
   for (size_t i = 0; i < useful_ptpl.size(); i++)
   {
-    if (useful_ptpl[i]) { ptpl_list.push_back(all_ptpl_list[i]); }//按照有效点平面容器记录的标志，将匹配到平面的不确定性点状态及其到该平面的状态都推入到 ptpl_list 中
+    if (useful_ptpl[i]) { ptpl_list.push_back(all_ptpl_list[i]); }
   }
+  useful_ptpl_ = useful_ptpl;  // 保存到成员，handleLIO 用来区分 Surf/Corner
 }
-
 void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTree *current_octo, const int current_layer, bool &is_sucess,
                                             double &prob, PointToPlane &single_ptpl)
 {
@@ -956,7 +956,7 @@ void VoxelMapManager::mapSliding()
 {
   if((position_last_ - last_slide_position).norm() < config_setting_.sliding_thresh)//计算机器人当前位置 position_last_ 和上一次执行清理时的位置 last_slide_position 之间的距离。
   {
-    std::cout<<RED<<"[DEBUG]: Last sliding length "<<(position_last_ - last_slide_position).norm()<<RESET<<"\n";
+    //std::cout<<RED<<"[DEBUG]: Last sliding length "<<(position_last_ - last_slide_position).norm()<<RESET<<"\n";
     return;
   }
 

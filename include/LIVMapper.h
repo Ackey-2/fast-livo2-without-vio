@@ -56,12 +56,26 @@ public:
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,
     const Eigen::Matrix3d& R,
     const Eigen::Vector3d& p,
-    int id);
+    int id,
+    PointCloudXYZI::Ptr surf_world,
+    PointCloudXYZI::Ptr corner_world);
     void cleanupLoopDetection();
+    // ============ PCD 三件套（LIO-SAM 兼容）============
+  PointCloudXYZI::Ptr global_trajectory_;   // 关键帧轨迹
+  PointCloudXYZI::Ptr global_surf_map_;     // 所有关键帧合并的 Surf
+  PointCloudXYZI::Ptr global_corner_map_;   // 所有关键帧合并的 Corner
+  std::mutex pcd_map_mtx_;
+  void finalizeKeyframe(int kf_idx,
+                        const PointCloudXYZI::Ptr& kf_surf,
+                        const PointCloudXYZI::Ptr& kf_corner,
+                        const Eigen::Vector3d& kf_p);
+  int    kf_segment_index_ = 0;   // 已写盘的分段编号（0 表示还没写过段）
+  int    kf_in_segment_    = 0;   // 当前段累计的关键帧数
+  void flushSegment(bool is_final);  // 把当前累积地图写盘；is_final=true 表示最后一段
   template <typename T> void set_posestamp(T &out);
   template <typename T> void pointBodyToWorld(const Eigen::Matrix<T, 3, 1> &pi, Eigen::Matrix<T, 3, 1> &po);
   template <typename T> Eigen::Matrix<T, 3, 1> pointBodyToWorld(const Eigen::Matrix<T, 3, 1> &pi);
-
+  ros::Publisher pub_voxel_normals_;
   std::mutex mtx_buffer, mtx_buffer_imu_prop;
   std::condition_variable sig_buffer;
 
@@ -174,7 +188,9 @@ public:
   int global_frame_id_ = 0;
 
   struct LoopInputData {
-  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;        // STD 回环用（稠密）
+  PointCloudXYZI::Ptr surf_world;                    // PCD 保存用（降采样后的 Surf，世界系）
+  PointCloudXYZI::Ptr corner_world;                  // PCD 保存用（降采样后的 Corner，世界系）
   Eigen::Matrix3d R;
   Eigen::Vector3d p;
   int frame_id;
@@ -188,10 +204,12 @@ public:
   // 子线程函数
 void loopDetectionThread();
 struct FrameData {
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;  // 世界坐标系点云
-    Eigen::Matrix3d R;                            // 旋转
-    Eigen::Vector3d p;                            // 平移
-    int id;                                       // 全局帧 ID
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;  // 用于 STD 回环
+    PointCloudXYZI::Ptr surf_world;              // 新增：Surf 点（世界系）
+    PointCloudXYZI::Ptr corner_world;            // 新增：Corner 点（世界系）
+    Eigen::Matrix3d R;
+    Eigen::Vector3d p;
+    int id;
   };
 std::deque<FrameData> frame_window_;
 

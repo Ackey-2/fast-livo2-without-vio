@@ -36,6 +36,9 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)//它被传入构造函数，使得 LIV
   pcl_wait_save.reset(new PointCloudXYZRGB());//待保存为 PCD 的 RGB 值点云
   pcl_wait_save_intensity.reset(new PointCloudXYZI()); //待保存为 PCD 的强度值点云
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));//体素地图管理器 
+    global_trajectory_.reset(new PointCloudXYZI());
+  global_surf_map_.reset(new PointCloudXYZI());
+  global_corner_map_.reset(new PointCloudXYZI());
   root_dir = ROOT_DIR;//根路径  来自CmakeLists.txt
   initializeFiles();//初始化PCD和Colmap输出的保存路径及文件，初始化状态预测及更新对应文件
   initializeComponents();//初始化组件
@@ -137,7 +140,7 @@ void LIVMapper::initializeFiles()
 {
 
  
-  if(pcd_save_interval > 0) fout_pcd_pos.open(std::string(ROOT_DIR) + "Log/PCD/scans_pos.json", std::ios::out);//判断是否分割帧保存 打开文件
+  
   fout_pre.open(DEBUG_FILE_DIR("mat_pre.txt"), std::ios::out);
   fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), std::ios::out);//打开文件 将 LIO和VIO 状态更新之前以及更新之后的分别输出
 }
@@ -148,7 +151,7 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh)
             nh.subscribe(lid_topic, 200000, &LIVMapper::livox_pcl_cbk, this): 
             nh.subscribe(lid_topic, 200000, &LIVMapper::standard_pcl_cbk, this);
   sub_imu = nh.subscribe(imu_topic, 200000, &LIVMapper::imu_cbk, this);
-  
+  pub_voxel_normals_ = nh.advertise<visualization_msgs::Marker>("/voxel_normals", 1);
   pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100);//VIO 更新后，发布世界系的当前点云（LVIO模式为RGB点云）
   pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 10);//发布 LIO 更新后的位姿，由函数publish_odometry调用 
   pubPath = nh.advertise<nav_msgs::Path>("/path", 10);//发布 LIO 更新后的路径
@@ -313,12 +316,11 @@ void LIVMapper::handleLIO()
   //std::cout << "[ LIO ] Update Voxel Map" << std::endl;
 
 
-// ===== 回环检测 =====
+// ===== 回环检测 + PCD 关键帧采集 =====
   {
+    // ---- (a) STD 回环用：稠密点云 ----
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_for_loop(
         new pcl::PointCloud<pcl::PointXYZI>());
- 
-    // ★ 用 feats_undistort（密集点云），不用 feats_down_body ★
     cloud_for_loop->reserve(feats_undistort->size());
     for (size_t i = 0; i < feats_undistort->size(); i++)
     {
@@ -333,20 +335,49 @@ void LIVMapper::handleLIO()
       pi.intensity = feats_undistort->points[i].intensity;
       cloud_for_loop->push_back(pi);
     }
- 
-     {
-        std::lock_guard<std::mutex> lk(loop_mtx_);
-        loop_queue_.push({cloud_for_loop, _state.rot_end, _state.pos_end, global_frame_id_++});
+
+    // ---- (b) PCD 保存用：Surf/Corner 分类（方案 B）----
+    // world_lidar 是前面已经用最新 _state 算出的 feats_down_body 世界系版本
+    PointCloudXYZI::Ptr frame_surf_world(new PointCloudXYZI());
+    PointCloudXYZI::Ptr frame_corner_world(new PointCloudXYZI());
+    frame_surf_world->reserve(world_lidar->size());
+    frame_corner_world->reserve(world_lidar->size());
+
+    const auto& useful = voxelmap_manager->useful_ptpl_;
+    const int N = (int)world_lidar->points.size();
+    for (int i = 0; i < N; i++) {
+      const auto& src = world_lidar->points[i];
+      PointType p;
+      p.x = src.x; p.y = src.y; p.z = src.z;
+      p.intensity = src.intensity;
+      if (i < (int)useful.size() && useful[i]) {
+        frame_surf_world->push_back(p);
+      } else {
+        frame_corner_world->push_back(p);
+      }
     }
-    loop_cv_.notify_one();  // 唤醒子线程
+
+    // ---- (c) 入队 ----
+    {
+      std::lock_guard<std::mutex> lk(loop_mtx_);
+      LoopInputData d;
+      d.cloud        = cloud_for_loop;
+      d.surf_world   = frame_surf_world;
+      d.corner_world = frame_corner_world;
+      d.R            = _state.rot_end;
+      d.p            = _state.pos_end;
+      d.frame_id     = global_frame_id_++;
+      loop_queue_.push(std::move(d));
+    }
+    loop_cv_.notify_one();
   }
   
 
-  voxelmap_manager->manageMapMemory(
-  voxelmap_manager->current_frame_id_,
-  10000,    // 最多 1 万个体素
-  800       // 最多 800 MB
-  );
+  //voxelmap_manager->manageMapMemory(
+  //voxelmap_manager->current_frame_id_,
+  //10000,    // 最多 1 万个体素
+  //800       // 最多 800 MB
+  //);
   double t4 = omp_get_wtime();
 
   if(voxelmap_manager->config_setting_.map_sliding_en)//判断 体素管理器的地图滑动使能清除超过某一范围内的所有体素及表索引
@@ -400,6 +431,17 @@ void LIVMapper::handleLIO()
 //   // printf("measures: %zu, voxel_map: %zu\n",
 //   //      LidarMeasures.measures.size(),
 //   //      voxelmap_manager->voxel_map_.size());
+// euler_cur = RotMtoEuler(_state.rot_end);//转为欧拉角 ，将更新后的状态保存到
+// Eigen::Quaterniond q_print(_state.rot_end);
+// printf("\033[1;32m[ Pose ] "
+//        "pos[xyz]: %.3f %.3f %.3f | "
+//        "euler[RPY deg]: %.2f %.2f %.2f | "
+//        "vel[xyz]: %.3f %.3f %.3f | "
+//        "quat[xyzw]: %.4f %.4f %.4f %.4f\033[0m\n",
+//        _state.pos_end[0], _state.pos_end[1], _state.pos_end[2],
+//        euler_cur[0], euler_cur[1], euler_cur[2],
+//        _state.vel_end[0], _state.vel_end[1], _state.vel_end[2],
+//        q_print.x(), q_print.y(), q_print.z(), q_print.w());
 // printf("\033[1;33m[ Memory ] "
 //        "voxel_map: %zu (%.1f MB) | "
 //        "measures: %zu | "
@@ -420,42 +462,112 @@ void LIVMapper::handleLIO()
 //        lid_raw_data_buffer.size(),
 //        imu_buffer.size(),
 //        prop_imu_buffer.size());
-  euler_cur = RotMtoEuler(_state.rot_end);//转为欧拉角 ，将更新后的状态保存到
+// // 重力估计
+// double g_norm = _state.gravity.norm();
+
+// // 这一帧有效平面法向量的方向分布（退化检测）
+// Eigen::Matrix3d normal_nnt = Eigen::Matrix3d::Zero();
+// for (const auto &ptpl : voxelmap_manager->ptpl_list_)
+// {
+//   normal_nnt += ptpl.normal_ * ptpl.normal_.transpose();
+// }
+// Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_normal(normal_nnt);
+// V3D normal_eig = es_normal.eigenvalues();  // 从小到大
+
+// printf("\033[1;36m[ Diag ] "
+//        "pos_z: %.3f | "
+//        "gravity[xyz]: %.3f %.3f %.3f (norm %.4f) | "
+//        "bias_a[xyz]: %.5f %.5f %.5f | "
+//        "bias_g[xyz]: %.5f %.5f %.5f | "
+//        "eff_feat: %d | "
+//        "normal_eig[min mid max]: %.1f %.1f %.1f\033[0m\n",
+//        _state.pos_end[2],
+//        _state.gravity[0], _state.gravity[1], _state.gravity[2], g_norm,
+//        _state.bias_a[0], _state.bias_a[1], _state.bias_a[2],
+//        _state.bias_g[0], _state.bias_g[1], _state.bias_g[2],
+//        voxelmap_manager->effct_feat_num_,
+//        normal_eig[0], normal_eig[1], normal_eig[2]);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
             << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << std::endl;
 }
 
-void LIVMapper::savePCD() 
+void LIVMapper::savePCD()
 {
-  if (pcd_save_en && (pcl_wait_save->points.size() > 0 || pcl_wait_save_intensity->points.size() > 0) && pcd_save_interval < 0) 
+  if (!pcd_save_en) return;
+
+  // 停回环线程，保证队列中残留帧被 finalizeKeyframe 处理完
   {
-    std::string raw_points_dir = std::string(ROOT_DIR) + "Log/PCD/all_raw_points.pcd";
-    std::string downsampled_points_dir = std::string(ROOT_DIR) + "Log/PCD/all_downsampled_points.pcd";
-    pcl::PCDWriter pcd_writer;
-    std::cout<<"start save"<<std::endl; 
+    std::lock_guard<std::mutex> lk(loop_mtx_);
+    loop_running_ = false;
+  }
+  loop_cv_.notify_one();
+  if (loop_thread_.joinable()) loop_thread_.join();
 
-      // 使用 PointCloudXYZI 类型 (即 pcl::PointCloud<PointType>)
-      PointCloudXYZI::Ptr downsampled_cloud(new PointCloudXYZI);
-      pcl::VoxelGrid<PointType> voxel_filter;
-      
-      // 设置输入为 pcl_wait_save_intensity (这是纯雷达模式下的全局地图缓存)
-      voxel_filter.setInputCloud(pcl_wait_save_intensity);
-      
-      // 使用参数服务器读取到的 filter_size_pcd (例如 0.5)
-      voxel_filter.setLeafSize(filter_size_pcd, filter_size_pcd, filter_size_pcd);
-      
-      // 执行滤波
-      voxel_filter.filter(*downsampled_cloud);
+  // 分段模式：把当前段的残余写成"最后一段"
+  if (pcd_save_interval > 0) {
+    if (kf_in_segment_ > 0) {
+      flushSegment(true);
+    } else {
+      std::cout << YELLOW << "[PCD] No remaining KFs in current segment, nothing to flush."
+                << RESET << std::endl;
+    }
+    std::cout << GREEN << "[PCD] Done. Total segments: " << kf_segment_index_
+              << RESET << std::endl;
+    return;
+  }
 
-      // 3. 新增: 保存降采样后的点云
-      pcd_writer.writeBinary(downsampled_points_dir, *downsampled_cloud);
-      std::cout << GREEN << "Downsampled point cloud data saved to: " << downsampled_points_dir 
-                << " with point count after filtering: " << downsampled_cloud->points.size() << RESET << std::endl;
-    
+  // 非分段模式（interval <= 0）：一次性把累积地图写成 4 个 PCD（无编号）
+  std::lock_guard<std::mutex> lk(pcd_map_mtx_);
+
+  const std::string traj_path   = std::string(ROOT_DIR) + "Log/PCD/trajectory.pcd";
+  const std::string surf_path   = std::string(ROOT_DIR) + "Log/PCD/SurfMap.pcd";
+  const std::string corner_path = std::string(ROOT_DIR) + "Log/PCD/CornerMap.pcd";
+  const std::string global_path = std::string(ROOT_DIR) + "Log/PCD/GlobalMap.pcd";
+
+  pcl::PCDWriter writer;
+
+  if (global_trajectory_ && !global_trajectory_->empty()) {
+    writer.writeBinary(traj_path, *global_trajectory_);
+    std::cout << GREEN << "[PCD] trajectory.pcd: "
+              << global_trajectory_->size() << " kfs -> " << traj_path << RESET << std::endl;
+  } else {
+    std::cout << YELLOW << "[PCD] trajectory empty, skip" << RESET << std::endl;
+  }
+
+  if (global_surf_map_ && !global_surf_map_->empty()) {
+    writer.writeBinary(surf_path, *global_surf_map_);
+    std::cout << GREEN << "[PCD] SurfMap.pcd: "
+              << global_surf_map_->size() << " pts -> " << surf_path << RESET << std::endl;
+  } else {
+    std::cout << YELLOW << "[PCD] surf empty, skip" << RESET << std::endl;
+  }
+
+  if (global_corner_map_ && !global_corner_map_->empty()) {
+    writer.writeBinary(corner_path, *global_corner_map_);
+    std::cout << GREEN << "[PCD] CornerMap.pcd: "
+              << global_corner_map_->size() << " pts -> " << corner_path << RESET << std::endl;
+  } else {
+    std::cout << YELLOW << "[PCD] corner empty, skip" << RESET << std::endl;
+  }
+
+  PointCloudXYZI::Ptr global_map(new PointCloudXYZI());
+  global_map->reserve((global_surf_map_   ? global_surf_map_->size()   : 0)
+                    + (global_corner_map_ ? global_corner_map_->size() : 0));
+  if (global_surf_map_)   *global_map += *global_surf_map_;
+  if (global_corner_map_) *global_map += *global_corner_map_;
+
+  if (!global_map->empty()) {
+    PointCloudXYZI::Ptr global_ds(new PointCloudXYZI());
+    const float leaf = (filter_size_pcd > 0.01) ? (float)filter_size_pcd : 0.15f;
+    voxelFilterManual(global_map, global_ds, leaf);
+    writer.writeBinary(global_path, *global_ds);
+    std::cout << GREEN << "[PCD] GlobalMap.pcd: "
+              << global_ds->size() << " pts (merged) -> " << global_path << RESET << std::endl;
+  } else {
+    std::cout << YELLOW << "[PCD] global empty, skip" << RESET << std::endl;
   }
 }
-
 void LIVMapper::run() 
 {
   ros::Rate rate(5000);//设置循环体的运行频率
@@ -841,42 +953,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes)
   laserCloudmsg.header.frame_id = "camera_init";
   pubLaserCloudFullRes.publish(laserCloudmsg);
 
-  if (pcd_save_en)
-  {
-    static int scan_wait_num = 0;
 
-    // 每帧先滤波再累积
-    if (filter_size_pcd > 0.001)
-    {
-      PointCloudXYZI::Ptr frame_filtered(new PointCloudXYZI());
-      voxelFilterManual(pcl_w_wait_pub, frame_filtered, filter_size_pcd);
-      *pcl_wait_save_intensity += *frame_filtered;
-    }
-    else
-    {
-      *pcl_wait_save_intensity += *pcl_w_wait_pub;
-    }
-
-    scan_wait_num++;
-
-    if (pcl_wait_save_intensity->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
-    {
-      pcd_index++;
-      string all_points_dir(string(ROOT_DIR) + "Log/PCD/" + to_string(pcd_index) + ".pcd");
-
-      cout << "saved PCD/" << pcd_index << ".pcd"
-           << " points: " << pcl_wait_save_intensity->size() << endl;
-
-      pcl::PCDWriter pcd_writer;
-      pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
-      pcl_wait_save_intensity->clear();
-
-      Eigen::Quaterniond q(_state.rot_end);
-      fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
-                   << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << endl;
-      scan_wait_num = 0;
-    }
-  }
 
   pcl_w_wait_pub->clear();
   pcl_wait_pub->clear();
@@ -953,11 +1030,11 @@ void LIVMapper::loopDetectionThread() {
         std::unique_lock<std::mutex> lk(loop_mtx_);
         loop_cv_.wait(lk, [&]{ return !loop_queue_.empty() || !loop_running_; });
         if (!loop_running_ && loop_queue_.empty()) break;
-        auto [cloud, R, p, id] = loop_queue_.front();
+        LoopInputData d = std::move(loop_queue_.front());
         loop_queue_.pop();
         lk.unlock();
-        // 这里不持锁，安心做耗时操作
-        loopDetection(cloud, R, p, id);
+        loopDetection(d.cloud, d.R, d.p, d.frame_id,
+                      d.surf_world, d.corner_world);
     }
 }
 
@@ -965,7 +1042,9 @@ void LIVMapper::loopDetection(
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,
     const Eigen::Matrix3d& R,
     const Eigen::Vector3d& p,
-    int id)
+    int id,
+    PointCloudXYZI::Ptr surf_world,
+    PointCloudXYZI::Ptr corner_world)
 {
     // ====================================================================
     // Step 1: 累积行驶距离
@@ -989,7 +1068,9 @@ void LIVMapper::loopDetection(
     // ====================================================================
  
     FrameData fd;
-    fd.cloud = cloud;
+    fd.cloud        = cloud;
+    fd.surf_world   = surf_world;
+    fd.corner_world = corner_world;
     fd.R = R;
     fd.p = p;
     fd.id = id;
@@ -1056,6 +1137,19 @@ void LIVMapper::loopDetection(
     // ====================================================================
 
  
+    // ====================================================================
+    // Step 6a: 聚合当前窗口的 Surf/Corner（世界系），为 PCD 保存准备
+    // ====================================================================
+    PointCloudXYZI::Ptr kf_surf(new PointCloudXYZI());
+    PointCloudXYZI::Ptr kf_corner(new PointCloudXYZI());
+    for (const auto& fr : frame_window_) {
+      if (fr.surf_world   && !fr.surf_world->empty())   *kf_surf   += *fr.surf_world;
+      if (fr.corner_world && !fr.corner_world->empty()) *kf_corner += *fr.corner_world;
+    }
+
+    // ====================================================================
+    // Step 6b: 清空滑动窗口
+    // ====================================================================
     frame_window_.clear();
  
     // ====================================================================
@@ -1188,10 +1282,184 @@ voxel_downsample(*merged_cloud, *cloud_down, leaf);
     last_kf_p_ = p;
     has_keyframe_ = true;
  
+    finalizeKeyframe(keyframe_count_, kf_surf, kf_corner, p);
+
     keyframe_count_++;
  
     // printf("[Loop] Keyframe %d created (id=%d, pos=[%.2f, %.2f, %.2f], total_dist=%.2fm)\n",
     //        keyframe_count_ - 1, id, p[0], p[1], p[2], cumulative_distance_);
+}
+void LIVMapper::finalizeKeyframe(int kf_idx,
+                                 const PointCloudXYZI::Ptr& kf_surf,
+                                 const PointCloudXYZI::Ptr& kf_corner,
+                                 const Eigen::Vector3d& kf_p)
+{
+  // 关键帧级别再降一次采样（基于 filter_size_pcd，默认 0.15）
+  const float leaf = (filter_size_pcd > 0.01) ? (float)filter_size_pcd : 0.15f;
+
+  PointCloudXYZI::Ptr kf_surf_ds(new PointCloudXYZI());
+  PointCloudXYZI::Ptr kf_corner_ds(new PointCloudXYZI());
+  if (kf_surf)   voxelFilterManual(kf_surf,   kf_surf_ds,   leaf);
+  if (kf_corner) voxelFilterManual(kf_corner, kf_corner_ds, leaf);
+
+  // intensity = 关键帧索引
+  for (auto& pt : kf_surf_ds->points)   pt.intensity = (float)kf_idx;
+  for (auto& pt : kf_corner_ds->points) pt.intensity = (float)kf_idx;
+
+  // trajectory 点
+  PointType tp;
+  tp.x = kf_p[0];
+  tp.y = kf_p[1];
+  tp.z = kf_p[2];
+  tp.intensity = (float)kf_idx;
+
+  {
+    std::lock_guard<std::mutex> lk(pcd_map_mtx_);
+    *global_surf_map_   += *kf_surf_ds;
+    *global_corner_map_ += *kf_corner_ds;
+    global_trajectory_->push_back(tp);
+    kf_in_segment_++;
+  }
+  euler_cur = RotMtoEuler(_state.rot_end);//转为欧拉角 ，将更新后的状态保存到
+Eigen::Quaterniond q_print(_state.rot_end);
+printf("\033[1;32m[ Pose ] "
+       "pos[xyz]: %.3f %.3f %.3f | "
+       "euler[RPY deg]: %.2f %.2f %.2f | "
+       "vel[xyz]: %.3f %.3f %.3f | "
+       "quat[xyzw]: %.4f %.4f %.4f %.4f\033[0m\n",
+       _state.pos_end[0], _state.pos_end[1], _state.pos_end[2],
+       euler_cur[0], euler_cur[1], euler_cur[2],
+       _state.vel_end[0], _state.vel_end[1], _state.vel_end[2],
+       q_print.x(), q_print.y(), q_print.z(), q_print.w());
+printf("\033[1;33m[ Memory ] "
+       "voxel_map: %zu (%.1f MB) | "
+       "measures: %zu | "
+       "pcd_buf: %.1f MB | "
+       "feats_undist: %zu | "
+       "pcl_w_wait: %zu | "
+       "pcl_wait: %zu | "
+       "lid_buf: %zu | "
+       "imu_buf: %zu | "
+       "prop_imu_buf: %zu\033[0m\n",
+       voxelmap_manager->voxel_map_.size(),
+       voxelmap_manager->estimateTotalMemory() / (1024.0 * 1024.0),
+       LidarMeasures.measures.size(),
+       pcl_wait_save_intensity->size() * sizeof(PointType) / (1024.0 * 1024.0),
+       feats_undistort->size(),
+       pcl_w_wait_pub->size(),
+       pcl_wait_pub->size(),
+       lid_raw_data_buffer.size(),
+       imu_buffer.size(),
+       prop_imu_buffer.size());
+// 重力估计
+double g_norm = _state.gravity.norm();
+
+// 这一帧有效平面法向量的方向分布（退化检测）
+Eigen::Matrix3d normal_nnt = Eigen::Matrix3d::Zero();
+for (const auto &ptpl : voxelmap_manager->ptpl_list_)
+{
+  normal_nnt += ptpl.normal_ * ptpl.normal_.transpose();
+}
+Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_normal(normal_nnt);
+V3D normal_eig = es_normal.eigenvalues();  // 从小到大
+
+printf("\033[1;36m[ Diag ] "
+       "pos_z: %.3f | "
+       "gravity[xyz]: %.3f %.3f %.3f (norm %.4f) | "
+       "bias_a[xyz]: %.5f %.5f %.5f | "
+       "bias_g[xyz]: %.5f %.5f %.5f | "
+       "eff_feat: %d | "
+       "normal_eig[min mid max]: %.1f %.1f %.1f\033[0m\n",
+       _state.pos_end[2],
+       _state.gravity[0], _state.gravity[1], _state.gravity[2], g_norm,
+       _state.bias_a[0], _state.bias_a[1], _state.bias_a[2],
+       _state.bias_g[0], _state.bias_g[1], _state.bias_g[2],
+       voxelmap_manager->effct_feat_num_,
+       normal_eig[0], normal_eig[1], normal_eig[2]);
+  // printf("\033[1;32m[PCD] KF %d saved: surf=%zu, corner=%zu, pos=[%.2f,%.2f,%.2f]\033[0m\n",
+  //        kf_idx, kf_surf_ds->size(), kf_corner_ds->size(),
+  //        kf_p[0], kf_p[1], kf_p[2]);
+
+  // 分段写盘：interval > 0 且攒够了就落盘一段
+  if (pcd_save_interval > 0 && kf_in_segment_ >= pcd_save_interval) {
+    flushSegment(false);
+  }
+}
+void LIVMapper::flushSegment(bool is_final)
+{
+  // 快照 + 清空（持锁完成，避免和发布线程/后续 finalizeKeyframe 打架）
+  PointCloudXYZI::Ptr seg_traj (new PointCloudXYZI());
+  PointCloudXYZI::Ptr seg_surf (new PointCloudXYZI());
+  PointCloudXYZI::Ptr seg_corn (new PointCloudXYZI());
+
+  int seg_idx_this;
+  {
+    std::lock_guard<std::mutex> lk(pcd_map_mtx_);
+
+    if ((!global_trajectory_ || global_trajectory_->empty()) &&
+        (!global_surf_map_   || global_surf_map_->empty())   &&
+        (!global_corner_map_ || global_corner_map_->empty())) {
+      return;  // 没东西可写
+    }
+
+    seg_idx_this = kf_segment_index_ + 1;  // 段号从 1 开始
+
+    *seg_traj = *global_trajectory_;
+    *seg_surf = *global_surf_map_;
+    *seg_corn = *global_corner_map_;
+
+    // 清空（trajectory 也清，保持 4 个文件一一对应；若想保留轨迹，改这里）
+    global_trajectory_->clear();
+    global_surf_map_->clear();
+    global_corner_map_->clear();
+    kf_in_segment_ = 0;
+    kf_segment_index_ = seg_idx_this;
+  }
+
+  // 写盘
+  const std::string suffix = "_" + std::to_string(seg_idx_this) + ".pcd";
+  const std::string traj_path   = std::string(ROOT_DIR) + "Log/PCD/trajectory" + suffix;
+  const std::string surf_path   = std::string(ROOT_DIR) + "Log/PCD/SurfMap"    + suffix;
+  const std::string corner_path = std::string(ROOT_DIR) + "Log/PCD/CornerMap"  + suffix;
+  const std::string global_path = std::string(ROOT_DIR) + "Log/PCD/GlobalMap"  + suffix;
+
+  pcl::PCDWriter writer;
+
+  if (!seg_traj->empty()) {
+    writer.writeBinary(traj_path, *seg_traj);
+    std::cout << GREEN << "[PCD][seg " << seg_idx_this << "] trajectory: "
+              << seg_traj->size() << " kfs -> " << traj_path << RESET << std::endl;
+  }
+  if (!seg_surf->empty()) {
+    writer.writeBinary(surf_path, *seg_surf);
+    std::cout << GREEN << "[PCD][seg " << seg_idx_this << "] SurfMap: "
+              << seg_surf->size() << " pts -> " << surf_path << RESET << std::endl;
+  }
+  if (!seg_corn->empty()) {
+    writer.writeBinary(corner_path, *seg_corn);
+    std::cout << GREEN << "[PCD][seg " << seg_idx_this << "] CornerMap: "
+              << seg_corn->size() << " pts -> " << corner_path << RESET << std::endl;
+  }
+
+  // GlobalMap = Surf + Corner 合并再滤一次
+  PointCloudXYZI::Ptr seg_global(new PointCloudXYZI());
+  seg_global->reserve(seg_surf->size() + seg_corn->size());
+  *seg_global += *seg_surf;
+  *seg_global += *seg_corn;
+
+  if (!seg_global->empty()) {
+    PointCloudXYZI::Ptr seg_global_ds(new PointCloudXYZI());
+    const float leaf = (filter_size_pcd > 0.01) ? (float)filter_size_pcd : 0.15f;
+    voxelFilterManual(seg_global, seg_global_ds, leaf);
+    writer.writeBinary(global_path, *seg_global_ds);
+    std::cout << GREEN << "[PCD][seg " << seg_idx_this << "] GlobalMap: "
+              << seg_global_ds->size() << " pts -> " << global_path << RESET << std::endl;
+  }
+
+  if (is_final) {
+    std::cout << GREEN << "[PCD] Final segment " << seg_idx_this
+              << " flushed on exit." << RESET << std::endl;
+  }
 }
 
 void LIVMapper::cleanupLoopDetection() {

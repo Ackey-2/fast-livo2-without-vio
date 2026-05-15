@@ -12,7 +12,7 @@
 #define PLM(a) vector<Eigen::Matrix<double, a, a>, Eigen::aligned_allocator<Eigen::Matrix<double, a, a>>>
 #define PLV(a) vector<Eigen::Matrix<double, a, 1>, Eigen::aligned_allocator<Eigen::Matrix<double, a, 1>>>
 
-#define G_m_s2 9.8
+#define G_m_s2 9.7913
 #define DIM 15
 #define NMATCH 5
 
